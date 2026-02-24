@@ -70,9 +70,13 @@ class EmulationManager:
             left_trigger_calibrated = self._cal_mgr.calibrate_trigger_fast(left_trigger, 'left')
             right_trigger_calibrated = self._cal_mgr.calibrate_trigger_fast(right_trigger, 'right')
 
-            # Update button states
+            # Update button states — merge GC buttons that share an Xbox button
+            # (e.g. Capture and Chat both map to BACK) so one doesn't cancel the other.
+            merged = {}
             for button_name, xbox_button in BUTTON_MAPPING.items():
                 pressed = button_states.get(button_name, False)
+                merged[xbox_button] = merged.get(xbox_button, False) or pressed
+            for xbox_button, pressed in merged.items():
                 if pressed:
                     self.gamepad.press_button(xbox_button)
                 else:
