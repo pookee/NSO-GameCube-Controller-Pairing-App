@@ -10,6 +10,7 @@ No elevated privileges needed.
 """
 
 import asyncio
+import platform
 import queue
 import re
 import sys
@@ -336,6 +337,26 @@ class BleakBackend:
             _log(f"  MTU = {client.mtu_size}")
         except Exception:
             pass
+
+        # Request lower connection interval on Windows 11+ for reduced input latency.
+        # Windows 10 defaults to 30-60ms intervals with no API to change them.
+        # Windows 11 (build 22000+) exposes ThroughputOptimized (~7.5-15ms).
+        if sys.platform == 'win32':
+            try:
+                build_number = int(platform.version().split('.')[-1])
+                if build_number >= 22000:
+                    from bleak.backends.winrt.client import BleakClientWinRT
+                    from winrt.windows.devices.bluetooth import (
+                        BluetoothLEPreferredConnectionParameters,
+                    )
+                    backend = client._backend
+                    if isinstance(backend, BleakClientWinRT):
+                        backend._requester.request_preferred_connection_parameters(
+                            BluetoothLEPreferredConnectionParameters.throughput_optimized
+                        )
+                        _log("  Requested ThroughputOptimized connection parameters")
+            except Exception as e:
+                _log(f"  Connection parameter optimization skipped: {e}")
 
         # Discover services and find write/notify characteristics
         write_chars = []
