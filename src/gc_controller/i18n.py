@@ -302,6 +302,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Minimize to system tray",
         "fr": "Réduire dans la zone de notification",
     },
+    "settings.run_at_startup": {
+        "en": "Run at startup",
+        "fr": "Lancer au démarrage",
+    },
     "settings.test_rumble": {
         "en": "Test Rumble",
         "fr": "Tester les vibrations",

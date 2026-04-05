@@ -1,0 +1,17 @@
+[Unit]
+Description=NSO GameCube Controller — headless emulation daemon
+Documentation=https://github.com/RyanCopley/NSO-GameCube-Controller-Pairing-App
+After=network.target
+
+# Started by the udev rule in 99-gc-controller.rules when a
+# controller is plugged in.  Can also be enabled permanently with:
+#   systemctl --user enable gc-controller.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gc-controller --headless
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
