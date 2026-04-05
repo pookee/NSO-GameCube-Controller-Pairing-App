@@ -13,6 +13,7 @@ from typing import Callable, Optional
 import customtkinter
 
 from . import ui_theme as T
+from .i18n import t
 
 IS_MACOS = sys.platform == "darwin"
 
@@ -95,7 +96,7 @@ class SettingsDialog:
 
         # ── Emulation Mode ──
         customtkinter.CTkLabel(
-            left, text="Emulation Mode",
+            left, text=t("settings.emulation_mode"),
             text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 16, "bold"),
         ).pack(anchor=tk.W, pady=(0, 4))
 
@@ -120,7 +121,7 @@ class SettingsDialog:
 
         # ── Trigger Mode ──
         customtkinter.CTkLabel(
-            left, text="Trigger Mode",
+            left, text=t("settings.trigger_mode"),
             text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 16, "bold"),
         ).pack(anchor=tk.W, pady=(12, 4))
 
@@ -138,7 +139,7 @@ class SettingsDialog:
 
         # ── Auto-connect ──
         customtkinter.CTkCheckBox(
-            left, text="Auto-connect USB at startup",
+            left, text=t("settings.auto_connect_usb"),
             variable=self._auto_connect_var,
             fg_color=T.RADIO_FG,
             hover_color=T.RADIO_HOVER,
@@ -151,7 +152,7 @@ class SettingsDialog:
         # ── Auto-scan BLE ──
         if self._auto_scan_ble_var is not None:
             customtkinter.CTkCheckBox(
-                left, text="Auto-scan BLE at startup",
+                left, text=t("settings.auto_scan_ble"),
                 variable=self._auto_scan_ble_var,
                 fg_color=T.RADIO_FG,
                 hover_color=T.RADIO_HOVER,
@@ -163,7 +164,7 @@ class SettingsDialog:
 
         # ── Minimize to tray ──
         customtkinter.CTkCheckBox(
-            left, text="Minimize to system tray",
+            left, text=t("settings.minimize_tray"),
             variable=self._minimize_to_tray_var,
             fg_color=T.RADIO_FG,
             hover_color=T.RADIO_HOVER,
@@ -175,7 +176,7 @@ class SettingsDialog:
 
         # ── Save button ──
         customtkinter.CTkButton(
-            left, text="Save",
+            left, text=t("btn.save"),
             command=self._on_save_click,
             fg_color="#463F6F",
             hover_color="#5A5190",
@@ -210,7 +211,7 @@ class SettingsDialog:
 
         # ── Test Rumble ──
         self._rumble_btn = customtkinter.CTkButton(
-            right, text="Test Rumble",
+            right, text=t("settings.test_rumble"),
             command=self._on_test_rumble_all,
             state="normal" if any_connected else "disabled",
             **btn_kwargs,
@@ -223,7 +224,7 @@ class SettingsDialog:
             sep_ble.pack(fill=tk.X, pady=(12, 8))
 
             customtkinter.CTkLabel(
-                right, text="Paired Controllers",
+                right, text=t("settings.paired_controllers"),
                 text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 16, "bold"),
             ).pack(anchor=tk.W, pady=(0, 4))
 
@@ -237,12 +238,12 @@ class SettingsDialog:
         sep2.pack(fill=tk.X, pady=(12, 8))
 
         customtkinter.CTkLabel(
-            right, text="About",
+            right, text=t("settings.about"),
             text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 16, "bold"),
         ).pack(anchor=tk.W, pady=(0, 4))
 
         src_link = customtkinter.CTkLabel(
-            right, text="Source Code on GitHub",
+            right, text=t("settings.source_code"),
             text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 13, "underline"),
             cursor="hand2",
         )
@@ -251,7 +252,7 @@ class SettingsDialog:
             "https://github.com/RyanCopley/NSO-GameCube-Controller-Pairing-App"))
 
         customtkinter.CTkLabel(
-            right, text="Credits & Special Thanks",
+            right, text=t("settings.credits"),
             text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 14, "bold"),
         ).pack(anchor=tk.W, pady=(8, 2))
 
@@ -295,7 +296,7 @@ class SettingsDialog:
         devices = self._get_known_ble_devices()
         if not devices:
             customtkinter.CTkLabel(
-                self._device_list_frame, text="No paired controllers",
+                self._device_list_frame, text=t("settings.no_paired"),
                 text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 13),
             ).pack(anchor=tk.W, padx=4, pady=2)
             return
@@ -319,14 +320,14 @@ class SettingsDialog:
             ).pack(side=tk.LEFT, padx=(4, 8))
 
             customtkinter.CTkButton(
-                row, text="Forget",
+                row, text=t("settings.forget"),
                 command=lambda m=mac: self._forget_device(m),
                 **muted_btn,
             ).pack(side=tk.LEFT)
 
         if len(devices) >= 2:
             customtkinter.CTkButton(
-                self._device_list_frame, text="Forget All",
+                self._device_list_frame, text=t("settings.forget_all"),
                 command=self._forget_all_devices,
                 fg_color="#463F6F",
                 hover_color="#5A5190",

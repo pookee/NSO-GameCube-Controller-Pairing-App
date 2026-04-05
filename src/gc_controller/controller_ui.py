@@ -15,6 +15,7 @@ import customtkinter
 from .controller_constants import MAX_SLOTS
 from .calibration import CalibrationManager
 from . import ui_theme as T
+from .i18n import t
 from .ui_controller_canvas import GCControllerVisual
 
 IS_MACOS = sys.platform == "darwin"
@@ -196,7 +197,7 @@ class ControllerUI:
         slot_ui.controller_visual.pack(padx=8, pady=(8, 0))
 
         slot_ui.status_label = customtkinter.CTkLabel(
-            visual_frame, text="Ready to Connect",
+            visual_frame, text=t("ui.ready"),
             text_color="#FFFFFF", font=(T.FONT_FAMILY, 14),
             anchor="center",
         )
@@ -227,7 +228,7 @@ class ControllerUI:
         )
 
         slot_ui.connect_btn = customtkinter.CTkButton(
-            btn_frame, text="Connect USB",
+            btn_frame, text=t("ui.connect_usb"),
             command=lambda i=index: on_connect(i),
             **btn_kwargs,
         )
@@ -236,14 +237,14 @@ class ControllerUI:
 
         if self._ble_available and on_pair:
             slot_ui.pair_btn = customtkinter.CTkButton(
-                btn_frame, text="Pair New Wireless Controller",
+                btn_frame, text=t("ui.pair_wireless"),
                 command=lambda i=index: on_pair(i),
                 **btn_kwargs,
             )
             slot_ui.pair_btn.pack(side=tk.LEFT, padx=4, expand=True, fill=tk.X)
 
         slot_ui.cal_wizard_btn = customtkinter.CTkButton(
-            btn_frame, text="Calibration Wizard",
+            btn_frame, text=t("ui.cal_wizard"),
             command=lambda i=index: on_cal_wizard(i),
             **btn_kwargs,
         )

@@ -32,6 +32,7 @@ graph TB
         WinGP["WindowsGamepad<br/>(vgamepad/ViGEmBus)"]
         LinGP["LinuxGamepad<br/>(evdev/uinput)"]
         DolphinGP["DolphinPipeGamepad<br/>(named FIFO)"]
+        DSUGP["DSUGamepad<br/>(dsu_server.py)"]
     end
 
     subgraph BLE["BLE Protocol"]
@@ -56,6 +57,7 @@ graph TB
     VGP --> WinGP
     VGP --> LinGP
     VGP --> DolphinGP
+    VGP --> DSUGP
     App --> BLESub
     App --> BleakSub
     BLESub --> Bumble
@@ -180,6 +182,18 @@ classDiagram
         +update()
     }
 
+    class DSUGamepad {
+        -DSUServer _server
+        -int _slot_index
+        +left_joystick(x, y)
+        +right_joystick(x, y)
+        +left_trigger(value)
+        +right_trigger(value)
+        +press_button(button)
+        +update()
+        +close()
+    }
+
     class GamepadButton {
         <<enum>>
         A
@@ -200,6 +214,7 @@ classDiagram
     VirtualGamepad <|-- WindowsGamepad : Windows
     VirtualGamepad <|-- LinuxGamepad : Linux
     VirtualGamepad <|-- DolphinPipeGamepad : macOS / Linux
+    VirtualGamepad <|-- DSUGamepad : All Platforms
     VirtualGamepad --> GamepadButton
 ```
 
@@ -557,26 +572,26 @@ flowchart TD
 ```mermaid
 flowchart TD
     subgraph Format["JSON Settings File"]
-        V2["V2 Format (current)"]
+        V3["V3 Format (current)"]
+        V2["V2 Format (legacy)"]
         V1["V1 Format (legacy)"]
     end
 
-    subgraph V2Structure["V2 Structure"]
-        Global["global:<br/>• auto_connect<br/>• emulation_mode<br/>• trigger_bump_100_percent"]
-        Slot0["slots.0:<br/>• trigger calibration<br/>• stick calibration<br/>• octagon points<br/>• preferred device path<br/>• preferred BLE address<br/>• connection mode"]
-        Slot1["slots.1: ..."]
-        Slot2["slots.2: ..."]
-        Slot3["slots.3: ..."]
+    subgraph V3Structure["V3 Structure"]
+        Global["global:<br/>• auto_connect<br/>• auto_scan_ble<br/>• emulation_mode<br/>• trigger_bump_100_percent<br/>• minimize_to_tray<br/>• known_ble_devices"]
     end
 
     Load["SettingsManager.load()"] --> Detect{"version?"}
+    Detect -- "v3" --> V3
     Detect -- "v2" --> V2
     Detect -- "v1 / missing" --> V1
-    V1 --> Migrate["Migrate to V2<br/>(slot 0 gets v1 data,<br/>slots 1-3 get defaults)"]
-    Migrate --> V2
-    V2 --> V2Structure
+    V1 --> MigrateV1["Migrate v1 to v3<br/>(rename trigger keys,<br/>apply global keys to slot 0)"]
+    V2 --> MigrateV2["Migrate v2 to v3<br/>(merge slots + BLE registry<br/>into known_ble_devices)"]
+    MigrateV1 --> V3
+    MigrateV2 --> V3
+    V3 --> V3Structure
 
-    Save["SettingsManager.save()"] --> WriteJSON["Write gc_controller_settings.json"]
+    Save["SettingsManager.save()"] --> WriteJSON["Write gc_controller_settings.json<br/>(global subset from slot_calibrations 0)"]
 ```
 
 ---
@@ -685,6 +700,7 @@ graph TD
     input_processor --> sw2_protocol
     emulation_manager --> virtual_gamepad["virtual_gamepad.py"]
     emulation_manager --> calibration
+    virtual_gamepad --> dsu_server["dsu_server.py"]
     connection_manager --> controller_constants
 
     ble_sub --> bumble_backend["ble/bumble_backend.py"]

@@ -5,6 +5,7 @@ Manages the HID read thread and processes raw controller data, feeding
 calibration tracking, emulation updates, and UI update scheduling.
 """
 
+import logging
 import queue
 import sys
 import time
@@ -16,6 +17,7 @@ from .calibration import CalibrationManager
 from .emulation_manager import EmulationManager
 
 IS_WINDOWS = sys.platform == 'win32'
+logger = logging.getLogger(__name__)
 
 
 def _translate_report_0x05(data) -> list:
@@ -91,6 +93,8 @@ def _translate_report_0x05(data) -> list:
     if len(data) > 62:
         buf[13] = data[61]  # left trigger analog
         buf[14] = data[62]  # right trigger analog
+    else:
+        logger.warning("Short 0x05 report (%d bytes) — trigger data missing", len(data))
 
     return buf
 
@@ -116,6 +120,7 @@ class InputProcessor:
         self._stop_event = threading.Event()
         self._read_thread: Optional[threading.Thread] = None
         self._ui_update_counter = 0
+        self._debug_log_counter = 0
 
     @property
     def stop_event(self) -> threading.Event:
@@ -253,6 +258,15 @@ class InputProcessor:
         if self._emu_mgr.is_emulating and self._emu_mgr.gamepad:
             self._emu_mgr.update(left_x_norm, left_y_norm, right_x_norm, right_y_norm,
                                  left_trigger, right_trigger, button_states)
+
+        # Periodic debug log (~1/sec at 250Hz)
+        self._debug_log_counter += 1
+        if self._debug_log_counter % 250 == 0:
+            pressed = [b for b, v in button_states.items() if v]
+            logger.debug("Input: LT=%d RT=%d LS=(%.2f,%.2f) RS=(%.2f,%.2f) btn=%s",
+                         left_trigger, right_trigger,
+                         left_x_norm, left_y_norm, right_x_norm, right_y_norm,
+                         pressed or "none")
 
         # UI updates (throttled)
         self._ui_update_counter += 1

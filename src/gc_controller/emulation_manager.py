@@ -8,12 +8,15 @@ Supports Xbox 360 mode and Dolphin named pipe mode.
 """
 
 import errno
+import logging
 import threading
 from typing import Optional, Dict
 
 from .virtual_gamepad import VirtualGamepad, create_gamepad
 from .controller_constants import BUTTON_MAPPING
 from .calibration import CalibrationManager
+
+logger = logging.getLogger(__name__)
 
 
 class EmulationManager:
@@ -30,6 +33,7 @@ class EmulationManager:
               rumble_callback=None) -> None:
         """Create the virtual gamepad and begin emulation. Raises on failure."""
         self.mode = mode
+        logger.info("Starting emulation: mode=%s slot=%d", mode, slot_index)
         self.gamepad = create_gamepad(mode, slot_index=slot_index,
                                      cancel_event=cancel_event)
         if rumble_callback and mode in ('xbox360', 'dsu'):
@@ -38,6 +42,7 @@ class EmulationManager:
 
     def stop(self) -> None:
         """Stop emulation and destroy the virtual gamepad."""
+        logger.info("Stopping emulation (mode=%s)", self.mode)
         self.is_emulating = False
         if self.gamepad:
             try:
