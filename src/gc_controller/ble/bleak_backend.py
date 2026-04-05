@@ -10,6 +10,7 @@ No elevated privileges needed.
 """
 
 import asyncio
+import logging
 import platform
 import queue
 import re
@@ -24,6 +25,8 @@ from bleak.backends.scanner import AdvertisementData
 from .sw2_protocol import (
     LED_MAP, build_led_cmd, translate_ble_native_to_usb,
 )
+
+_logger = logging.getLogger(__name__)
 
 # Nintendo BLE manufacturer company ID (from protocol doc)
 _NINTENDO_COMPANY_ID = 0x037E
@@ -52,6 +55,7 @@ _SET_INPUT_MODE = bytearray([
 
 def _log(msg: str):
     """Debug log to stderr (visible in terminal, not in IPC pipe)."""
+    _logger.debug(msg)
     print(f"[bleak] {msg}", file=sys.stderr, flush=True)
 
 
@@ -230,7 +234,8 @@ class BleakBackend:
     async def scan_only(self, scan_timeout: float = 10.0) -> list[dict]:
         """Run a full BLE scan and return discovered devices.
 
-        Returns a list of dicts with keys: address, name, rssi.
+        Returns a list of dicts with keys: address, name, rssi,
+        manufacturer_data, service_uuids.
         Caches BLEDevice objects in self._last_scan for connect_device().
         """
         _log(f"scan_only: scanning for {scan_timeout}s...")
@@ -252,10 +257,18 @@ class BleakBackend:
         for addr, device in found_devices.items():
             adv = found_adv.get(addr)
             rssi = adv.rssi if adv and adv.rssi is not None else -999
+            mfg = {}
+            svc_uuids = []
+            if adv:
+                mfg = {str(cid): val.hex() for cid, val in
+                       getattr(adv, 'manufacturer_data', {}).items()}
+                svc_uuids = list(getattr(adv, 'service_uuids', []))
             result.append({
-                'address': addr,
+                'address': addr.upper(),
                 'name': device.name or '',
                 'rssi': rssi,
+                'manufacturer_data': mfg,
+                'service_uuids': svc_uuids,
             })
 
         _log(f"scan_only: found {len(result)} device(s)")

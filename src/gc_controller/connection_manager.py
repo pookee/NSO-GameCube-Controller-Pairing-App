@@ -5,6 +5,7 @@ Handles USB initialization and HID device connection for the GameCube controller
 Supports multi-device enumeration and path-targeted open for multi-controller setups.
 """
 
+import logging
 import sys
 from typing import Optional, Callable, List
 
@@ -14,6 +15,7 @@ import usb.util
 
 from .controller_constants import VENDOR_ID, PRODUCT_ID, DEFAULT_REPORT_DATA, SET_LED_DATA
 
+logger = logging.getLogger(__name__)
 IS_MACOS = sys.platform == "darwin"
 
 
@@ -29,16 +31,23 @@ class ConnectionManager:
     @staticmethod
     def enumerate_devices() -> List[dict]:
         """Return a list of HID device info dicts for all connected GC controllers."""
-        return hid.enumerate(VENDOR_ID, PRODUCT_ID)
+        devices = hid.enumerate(VENDOR_ID, PRODUCT_ID)
+        logger.debug("HID enumerate: %d device(s) for VID=%04x PID=%04x",
+                      len(devices), VENDOR_ID, PRODUCT_ID)
+        for d in devices:
+            logger.debug("  path=%s  product=%s", d.get('path'), d.get('product_string'))
+        return devices
 
     @staticmethod
     def enumerate_usb_devices() -> list:
         """Return a list of all USB device objects matching the GC controller VID/PID."""
         try:
             devices = usb.core.find(find_all=True, idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
-            return list(devices) if devices else []
-        except Exception:
-            # pyusb backend not available (e.g. missing libusb on Windows)
+            result = list(devices) if devices else []
+            logger.debug("USB enumerate: %d device(s)", len(result))
+            return result
+        except Exception as e:
+            logger.debug("USB enumerate failed (expected on Windows without libusb): %s", e)
             return []
 
     def initialize_via_usb(self, usb_device=None) -> bool:

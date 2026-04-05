@@ -9,10 +9,13 @@ No per-slot data is persisted — slots are assigned at runtime.
 """
 
 import json
+import logging
 import os
 from typing import List
 
 from .controller_constants import DEFAULT_CALIBRATION, MAX_SLOTS, BLE_DEVICE_CAL_KEYS
+
+logger = logging.getLogger(__name__)
 
 
 # Keys stored in the global section of the config file.
@@ -33,11 +36,13 @@ class SettingsManager:
         """Load settings from file. Handles v1, v2, and v3 formats."""
         try:
             if not os.path.exists(self._settings_file):
+                logger.debug("No settings file at %s", self._settings_file)
                 return
             with open(self._settings_file, 'r') as f:
                 saved = json.load(f)
 
             version = saved.get('version', 1)
+            logger.info("Loading settings v%d from %s", version, self._settings_file)
             if version >= 3:
                 self._load_v3(saved)
             elif version >= 2:
@@ -45,6 +50,7 @@ class SettingsManager:
             else:
                 self._load_v1(saved)
         except Exception as e:
+            logger.warning("Failed to load settings: %s", e)
             print(f"Failed to load settings: {e}")
 
     def _load_v1(self, saved: dict):

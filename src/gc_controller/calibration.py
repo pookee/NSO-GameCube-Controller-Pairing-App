@@ -5,10 +5,21 @@ Owns all stick calibration tracking state, trigger calibration wizard state,
 and the cached calibration used on the emulation hot path.
 """
 
+import logging
 import math
 import threading
 
 from .controller_constants import normalize
+from .i18n import t
+
+logger = logging.getLogger(__name__)
+
+_TRIGGER_CAL_KEYS = (
+    'trigger_left_base', 'trigger_left_bump', 'trigger_left_max',
+    'trigger_right_base', 'trigger_right_bump', 'trigger_right_max',
+)
+
+_MIN_TRIGGER_DELTA = 15
 
 
 class CalibrationManager:
@@ -28,8 +39,12 @@ class CalibrationManager:
 
         # Trigger calibration wizard state
         self.trigger_cal_step = 0
-        self.trigger_cal_last_left = 0
-        self.trigger_cal_last_right = 0
+        self._trigger_cal_last_left = 0
+        self._trigger_cal_last_right = 0
+        self._trigger_cal_peak_left = 0
+        self._trigger_cal_peak_right = 0
+        self._trigger_cal_snapshot: dict | None = None
+        self._trigger_cal_force_next = False
 
     def refresh_cache(self):
         """Update the cached calibration dict after external mutations."""
@@ -152,42 +167,166 @@ class CalibrationManager:
 
     # ── Trigger calibration ──────────────────────────────────────────
 
+    @property
+    def trigger_cal_last_left(self):
+        with self._cal_lock:
+            return self._trigger_cal_last_left
+
+    @property
+    def trigger_cal_last_right(self):
+        with self._cal_lock:
+            return self._trigger_cal_last_right
+
+    @property
+    def trigger_cal_peak_left(self):
+        with self._cal_lock:
+            return self._trigger_cal_peak_left
+
+    @property
+    def trigger_cal_peak_right(self):
+        with self._cal_lock:
+            return self._trigger_cal_peak_right
+
+    def _reset_trigger_peaks(self):
+        """Reset peak tracking to current instantaneous values."""
+        self._trigger_cal_peak_left = self._trigger_cal_last_left
+        self._trigger_cal_peak_right = self._trigger_cal_last_right
+
     def update_trigger_raw(self, left_trigger, right_trigger):
-        """Store latest raw trigger values for the calibration wizard."""
-        self.trigger_cal_last_left = left_trigger
-        self.trigger_cal_last_right = right_trigger
+        """Store latest raw trigger values and update peaks for calibration."""
+        with self._cal_lock:
+            self._trigger_cal_last_left = left_trigger
+            self._trigger_cal_last_right = right_trigger
+            if self.trigger_cal_step > 0:
+                if left_trigger > self._trigger_cal_peak_left:
+                    self._trigger_cal_peak_left = left_trigger
+                if right_trigger > self._trigger_cal_peak_right:
+                    self._trigger_cal_peak_right = right_trigger
+
+    def trigger_cal_cancel(self):
+        """Cancel an in-progress trigger calibration, restoring prior values."""
+        if self.trigger_cal_step == 0:
+            return
+        if self._trigger_cal_snapshot is not None:
+            for key in _TRIGGER_CAL_KEYS:
+                self._calibration[key] = self._trigger_cal_snapshot[key]
+            self._cached_calibration = self._calibration.copy()
+            logger.debug("Trigger calibration cancelled — restored snapshot")
+        self._trigger_cal_snapshot = None
+        self._trigger_cal_force_next = False
+        self._trigger_cal_peak_left = 0
+        self._trigger_cal_peak_right = 0
+        self.trigger_cal_step = 0
+
+    def _trigger_val_ok(self, val: float, ref: float, label: str) -> bool:
+        """Check that a captured trigger value is far enough from the reference.
+        Returns True if valid (or if the user forced past the warning)."""
+        if self._trigger_cal_force_next:
+            self._trigger_cal_force_next = False
+            logger.warning("Trigger cal: forcing %s=%d despite being close to ref=%d", label, val, ref)
+            return True
+        if abs(val - ref) < _MIN_TRIGGER_DELTA:
+            logger.warning("Trigger cal: %s=%d too close to ref=%d (delta=%d < %d)",
+                           label, val, ref, abs(val - ref), _MIN_TRIGGER_DELTA)
+            self._trigger_cal_force_next = True
+            return False
+        return True
 
     def trigger_cal_next_step(self):
         """Advance the trigger calibration wizard one step.
+
+        Uses PEAK values (max seen since the step started) rather than
+        instantaneous values so the user can press-and-release before
+        clicking Continue.
+
         Returns (step, btn_text, status_text) for the UI to update.
-        Returns None when no UI update is needed (internal recording)."""
+        If a captured value seems wrong, the step is NOT advanced and
+        the user gets a warning with the option to click again to force.
+        """
         step = self.trigger_cal_step
 
         if step == 0:
+            self._trigger_cal_snapshot = {k: self._calibration[k] for k in _TRIGGER_CAL_KEYS}
+            self._trigger_cal_force_next = False
+            self._reset_trigger_peaks()
             self.trigger_cal_step = 1
-            return (1, "Continue", "Release both triggers, then click Continue")
+            return (1, t("btn.continue"), t("cal.trigger_release"))
+
         elif step == 1:
-            self._calibration['trigger_left_base'] = float(self.trigger_cal_last_left)
-            self._calibration['trigger_right_base'] = float(self.trigger_cal_last_right)
-            self.trigger_cal_step = 2
-            return (2, "Continue", "Push LEFT trigger to analog max (before click)")
-        elif step == 2:
-            self._calibration['trigger_left_bump'] = float(self.trigger_cal_last_left)
-            self.trigger_cal_step = 3
-            return (3, "Continue", "Fully press LEFT trigger past the bump")
-        elif step == 3:
-            self._calibration['trigger_left_max'] = float(self.trigger_cal_last_left)
-            self.trigger_cal_step = 4
-            return (4, "Continue", "Push RIGHT trigger to analog max (before click)")
-        elif step == 4:
-            self._calibration['trigger_right_bump'] = float(self.trigger_cal_last_right)
-            self.trigger_cal_step = 5
-            return (5, "Continue", "Fully press RIGHT trigger past the bump")
-        elif step == 5:
-            self._calibration['trigger_right_max'] = float(self.trigger_cal_last_right)
+            left_val = self.trigger_cal_last_left
+            right_val = self.trigger_cal_last_right
+            logger.debug("Trigger cal step 1 (base): L=%d  R=%d", left_val, right_val)
+            self._calibration['trigger_left_base'] = float(left_val)
+            self._calibration['trigger_right_base'] = float(right_val)
             self._cached_calibration = self._calibration.copy()
+            self._reset_trigger_peaks()
+            self.trigger_cal_step = 2
+            return (2, t("btn.continue"), t("cal.trigger_left_bump"))
+
+        elif step == 2:
+            val = self._trigger_cal_peak_left
+            base = self._calibration['trigger_left_base']
+            logger.debug("Trigger cal step 2 (L bump): peak=%d  base=%.0f", val, base)
+            if not self._trigger_val_ok(val, base, "left_bump"):
+                return (2, t("cal.btn_retry_or_force"),
+                        t("cal.trigger_retry_left",
+                          val=val, base=f"{base:.0f}"))
+            self._calibration['trigger_left_bump'] = float(val)
+            self._cached_calibration = self._calibration.copy()
+            self._reset_trigger_peaks()
+            self.trigger_cal_step = 3
+            return (3, t("btn.continue"), t("cal.trigger_left_max"))
+
+        elif step == 3:
+            val = self._trigger_cal_peak_left
+            base = self._calibration['trigger_left_base']
+            logger.debug("Trigger cal step 3 (L max): peak=%d  base=%.0f", val, base)
+            if not self._trigger_val_ok(val, base, "left_max"):
+                return (3, t("cal.btn_retry_or_force"),
+                        t("cal.trigger_retry_left",
+                          val=val, base=f"{base:.0f}"))
+            self._calibration['trigger_left_max'] = float(val)
+            self._cached_calibration = self._calibration.copy()
+            self._reset_trigger_peaks()
+            self.trigger_cal_step = 4
+            return (4, t("btn.continue"), t("cal.trigger_right_bump"))
+
+        elif step == 4:
+            val = self._trigger_cal_peak_right
+            base = self._calibration['trigger_right_base']
+            logger.debug("Trigger cal step 4 (R bump): peak=%d  base=%.0f", val, base)
+            if not self._trigger_val_ok(val, base, "right_bump"):
+                return (4, t("cal.btn_retry_or_force"),
+                        t("cal.trigger_retry_right",
+                          val=val, base=f"{base:.0f}"))
+            self._calibration['trigger_right_bump'] = float(val)
+            self._cached_calibration = self._calibration.copy()
+            self._reset_trigger_peaks()
+            self.trigger_cal_step = 5
+            return (5, t("btn.continue"), t("cal.trigger_right_max"))
+
+        elif step == 5:
+            val = self._trigger_cal_peak_right
+            base = self._calibration['trigger_right_base']
+            logger.debug("Trigger cal step 5 (R max): peak=%d  base=%.0f", val, base)
+            if not self._trigger_val_ok(val, base, "right_max"):
+                return (5, t("cal.btn_retry_or_force"),
+                        t("cal.trigger_retry_right",
+                          val=val, base=f"{base:.0f}"))
+            self._calibration['trigger_right_max'] = float(val)
+            self._cached_calibration = self._calibration.copy()
+            self._trigger_cal_snapshot = None
+            self._trigger_cal_force_next = False
             self.trigger_cal_step = 0
-            return (0, "Calibrate Triggers", "Trigger calibration completed")
+            logger.info("Trigger calibration completed: base_l=%.0f bump_l=%.0f max_l=%.0f "
+                        "base_r=%.0f bump_r=%.0f max_r=%.0f",
+                        self._calibration['trigger_left_base'],
+                        self._calibration['trigger_left_bump'],
+                        self._calibration['trigger_left_max'],
+                        self._calibration['trigger_right_base'],
+                        self._calibration['trigger_right_bump'],
+                        self._calibration['trigger_right_max'])
+            return (0, t("ui.cal_triggers"), t("cal.trigger_completed"))
 
     # ── Hot-path trigger calibration ─────────────────────────────────
 
