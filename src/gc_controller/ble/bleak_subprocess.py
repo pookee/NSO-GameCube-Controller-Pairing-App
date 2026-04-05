@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """BLE subprocess for macOS/Windows — uses Bleak.
 
-No elevated privileges needed. Same JSON-line IPC protocol as ble_subprocess.py.
+No elevated privileges needed. Same IPC protocol as ble_subprocess.py.
 
-Protocol (JSON lines):
-  Parent -> Child commands:
+Protocol:
+  Input data uses a binary format for minimal latency:
+    0xFF (1 byte magic) + slot_index (1 byte) + raw_data (64 bytes) = 66 bytes
+  All other events use JSON lines (which never start with 0xFF).
+
+  Parent -> Child commands (JSON lines):
     {"cmd": "stop_bluez"}
     {"cmd": "open"}
     {"cmd": "scan_connect", "slot_index": 0, "target_address": "..."}
@@ -15,7 +19,7 @@ Protocol (JSON lines):
     {"cmd": "disconnect", "slot_index": 0, "address": "..."}
     {"cmd": "shutdown"}
 
-  Child -> Parent events:
+  Child -> Parent events (JSON lines):
     {"e": "ready"}
     {"e": "bluez_stopped"}
     {"e": "open_ok"}
@@ -25,8 +29,10 @@ Protocol (JSON lines):
     {"e": "connect_error", "s": <slot>, "msg": "..."}
     {"e": "devices_found", "s": <slot>, "devices": [...]}
     {"e": "device_detected", "s": <slot>, "device": {...}}
-    {"e": "data", "s": <slot>, "d": "<base64>"}
     {"e": "disconnected", "s": <slot>}
+
+  Child -> Parent data (binary):
+    0xFF + slot_index(1) + raw_data(64) = 66 bytes total
 """
 
 import asyncio
@@ -38,25 +44,47 @@ import sys
 import threading
 
 
+_stdout_fd = None
+
+
+def _get_stdout_fd():
+    global _stdout_fd
+    if _stdout_fd is None:
+        _stdout_fd = sys.stdout.buffer.fileno()
+    return _stdout_fd
+
+
 def send(event: dict):
-    """Send a JSON-line event to the parent process."""
+    """Send a JSON-line event to the parent process via stdout fd."""
     try:
-        sys.stdout.write(json.dumps(event, separators=(',', ':')) + '\n')
-        sys.stdout.flush()
+        os.write(_get_stdout_fd(),
+                 (json.dumps(event, separators=(',', ':')) + '\n').encode('utf-8'))
     except Exception:
         pass
 
 
 class PipeQueue:
-    """queue.Queue adapter that forwards data to the parent via stdout."""
+    """queue.Queue adapter that forwards input data to the parent via binary stdout.
+
+    Uses a compact binary format (0xFF + slot + 64 bytes) instead of
+    JSON+base64 to minimize serialization overhead on the hot path.
+    Writes via os.write() for single-syscall low-latency delivery.
+    """
 
     def __init__(self, slot_index: int):
         self._slot = slot_index
+        self._packet = bytearray(66)
+        self._packet[0] = 0xFF
+        self._packet[1] = slot_index & 0xFF
 
     def put_nowait(self, data):
         try:
-            send({"e": "data", "s": self._slot,
-                  "d": base64.b64encode(data).decode('ascii')})
+            pkt = self._packet
+            src = bytes(data[:64])
+            pkt[2:2 + len(src)] = src
+            if len(src) < 64:
+                pkt[2 + len(src):66] = b'\x00' * (64 - len(src))
+            os.write(_get_stdout_fd(), pkt)
         except Exception:
             pass
 

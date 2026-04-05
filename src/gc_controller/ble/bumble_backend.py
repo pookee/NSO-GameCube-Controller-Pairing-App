@@ -10,7 +10,7 @@ import queue
 from typing import Callable, Optional
 
 from bumble.device import Device, Peer, ConnectionParametersPreferences
-from bumble.hci import Address, HCI_LE_1M_PHY
+from bumble.hci import Address, HCI_LE_1M_PHY, HCI_LE_2M_PHY
 from bumble.pairing import PairingConfig, PairingDelegate
 from bumble.transport import open_transport
 from bumble import smp  # noqa: F401
@@ -122,11 +122,17 @@ class BumbleBackend:
                 Address(mac, Address.PUBLIC_DEVICE_ADDRESS),
                 connection_parameters_preferences={
                     HCI_LE_1M_PHY: ConnectionParametersPreferences(
-                        connection_interval_min=15.0,
-                        connection_interval_max=30.0,
+                        connection_interval_min=7.5,
+                        connection_interval_max=15.0,
                         max_latency=0,
                         supervision_timeout=5000,
-                    )
+                    ),
+                    HCI_LE_2M_PHY: ConnectionParametersPreferences(
+                        connection_interval_min=7.5,
+                        connection_interval_max=15.0,
+                        max_latency=0,
+                        supervision_timeout=5000,
+                    ),
                 },
                 timeout=connect_timeout,
             )
@@ -183,6 +189,8 @@ class BumbleBackend:
         except Exception:
             pass
 
+        self._log_connection_params(connection, peer, on_status)
+
         if disconnected.is_set():
             self._connections.pop(mac, None)
             self._peers.pop(mac, None)
@@ -231,6 +239,42 @@ class BumbleBackend:
             return None
 
         return mac
+
+    @staticmethod
+    def _log_connection_params(connection, peer, on_status):
+        """Log negotiated BLE connection parameters for latency diagnostics."""
+        parts = []
+        try:
+            params = getattr(connection, 'parameters', None)
+            if params:
+                interval = getattr(params, 'connection_interval', None)
+                if interval is not None:
+                    parts.append(f"interval={interval:.1f}ms")
+                latency = getattr(params, 'peripheral_latency',
+                                  getattr(params, 'max_latency', None))
+                if latency is not None:
+                    parts.append(f"latency={latency}")
+                sup_to = getattr(params, 'supervision_timeout', None)
+                if sup_to is not None:
+                    parts.append(f"sup_timeout={sup_to}")
+        except Exception:
+            pass
+        try:
+            phy = getattr(connection, 'phy', None)
+            if phy:
+                parts.append(f"PHY={phy}")
+        except Exception:
+            pass
+        try:
+            mtu = getattr(peer, 'mtu', None)
+            if mtu:
+                parts.append(f"MTU={mtu}")
+        except Exception:
+            pass
+        if parts:
+            msg = "BLE params: " + ", ".join(parts)
+            on_status(msg)
+            print(f"  [BLE] {msg}", file=__import__('sys').stderr)
 
     async def _scan(self, timeout: float,
                     exclude_addresses: Optional[list[str]] = None,

@@ -149,11 +149,28 @@ class DSUServer:
         self._slot_packet_counter = [0] * 4
 
         # Per-slot pad data buffers (pre-allocated for hot path)
-        # Each buffer holds the full controller state for one slot
         self._slot_states = [self._make_empty_state() for _ in range(4)]
 
-        # Subscribed clients: set of (addr, port) tuples with expiry
+        # Pre-allocated packet buffers (100 bytes each) with static fields
+        self._packet_bufs = []
+        for slot in range(4):
+            buf = bytearray(100)
+            buf[0:4] = DSUS_MAGIC
+            struct.pack_into('<H', buf, 4, DSU_PROTOCOL_VERSION)
+            struct.pack_into('<H', buf, 6, 84)  # payload length is always 84
+            struct.pack_into('<I', buf, 12, self._server_id)
+            # Payload static fields (offset 16 = start of payload)
+            struct.pack_into('<I', buf, 16, MSG_TYPE_DATA)
+            buf[20] = slot & 0xFF       # pad id
+            buf[22] = MODEL_DS4         # model
+            buf[23] = CONN_TYPE_USB     # connection type
+            buf[29] = slot & 0xFF       # MAC byte 5
+            buf[30] = BATTERY_FULL      # battery
+            self._packet_bufs.append(buf)
+
+        # Subscribed clients: canonical dict under lock, snapshot for hot path
         self._subscribers: dict[tuple, float] = {}
+        self._subscribers_snapshot: list[tuple] = []
         self._sub_lock = threading.Lock()
 
         # Per-slot rumble callbacks
@@ -254,6 +271,7 @@ class DSUServer:
             try:
                 data, addr = self._sock.recvfrom(1024)
             except socket.timeout:
+                self._prune_subscribers()
                 continue
             except OSError:
                 if self._running:
@@ -298,115 +316,93 @@ class DSUServer:
     def _handle_data_request(self, data: bytes, addr: tuple) -> None:
         """Register a client subscription for pad data."""
         with self._sub_lock:
-            # Subscriptions expire after 5 seconds if not renewed
             self._subscribers[addr] = time.monotonic() + 5.0
+            self._subscribers_snapshot = list(self._subscribers.keys())
 
     def _send_data_to_subscribers(self, slot: int) -> None:
-        """Build and send a pad data packet to all active subscribers."""
-        if not self._sock:
+        """Build and send a pad data packet to all active subscribers.
+
+        Uses a snapshot of the subscriber list to avoid holding the lock
+        during packet build + sendto (the hot path).  Pruning happens
+        periodically from the listener thread via _prune_subscribers().
+        """
+        subs = self._subscribers_snapshot
+        if not subs or not self._sock:
             return
 
-        now = time.monotonic()
-        # Build packet once, send to all subscribers
         packet = self._build_data_packet(slot)
+        for addr in subs:
+            try:
+                self._sock.sendto(packet, addr)
+            except OSError:
+                pass
 
+    def _prune_subscribers(self) -> None:
+        """Remove expired subscribers and refresh the snapshot."""
+        now = time.monotonic()
         with self._sub_lock:
-            # Prune expired subscribers and send to active ones
-            expired = [addr for addr, exp in self._subscribers.items() if exp < now]
-            for addr in expired:
-                del self._subscribers[addr]
-
-            for addr in self._subscribers:
-                try:
-                    self._sock.sendto(packet, addr)
-                except OSError:
-                    pass
+            expired = [a for a, exp in self._subscribers.items() if exp < now]
+            if not expired:
+                return
+            for a in expired:
+                del self._subscribers[a]
+            self._subscribers_snapshot = list(self._subscribers.keys())
 
     def _build_data_packet(self, slot: int) -> bytearray:
-        """Build a full pad data response packet for a slot (100 bytes total).
+        """Build a pad data packet into the pre-allocated buffer for a slot.
 
-        Payload layout (84 bytes, offsets relative to payload start):
-          0- 3: Message type (uint32)
-          4-14: Shared response (slot, state, model, conn_type, MAC[6], battery)
-            15: Connected/active flag
-         16-19: Packet number (uint32)
-            20: Buttons byte 1 (Share, L3, R3, Options, DPad)
-            21: Buttons byte 2 (face buttons, shoulders)
-            22: PS button
-            23: Touch button
-         24-27: Sticks (LX, LY, RX, RY) as 0-255
-         28-39: Analog button pressure (12 bytes)
-         40-51: Touch data (2x 6-byte touch points)
-         52-59: Motion timestamp (uint64, microseconds)
-         60-71: Accelerometer XYZ (3x float32)
-         72-83: Gyroscope pitch/yaw/roll (3x float32)
+        Only writes the dynamic fields; static header and controller info
+        fields were written once in __init__.
         """
+        buf = self._packet_bufs[slot]
         state = self._slot_states[slot]
         connected = self._slot_connected[slot]
 
-        payload = bytearray(84)
+        # Dynamic header field: CRC zeroed before computation
+        buf[8:12] = b'\x00\x00\x00\x00'
 
-        # Message type
-        struct.pack_into('<I', payload, 0, MSG_TYPE_DATA)
+        # Dynamic payload fields (payload starts at offset 16)
+        buf[21] = 0x02 if connected else 0x00     # state
+        buf[31] = 0x01 if connected else 0x00      # is connected (active)
 
-        # Controller info (shared response)
-        payload[4] = slot & 0xFF  # pad id
-        payload[5] = 0x02 if connected else 0x00  # state
-        payload[6] = MODEL_DS4  # model
-        payload[7] = CONN_TYPE_USB  # connection type
-        # MAC (6 bytes) — slot-based fake MAC
-        payload[13] = slot & 0xFF
-        payload[14] = BATTERY_FULL
-        payload[15] = 0x01 if connected else 0x00  # is connected (active)
+        struct.pack_into('<I', buf, 32, self._slot_packet_counter[slot])
 
-        # Packet number
-        struct.pack_into('<I', payload, 16, self._slot_packet_counter[slot])
+        buf[36] = state['buttons1']
+        buf[37] = state['buttons2']
+        buf[38] = state['ps_button']
+        buf[39] = state['touch_button']
 
-        # Buttons byte 0: Share(0), L3(1), R3(2), Options(3),
-        #                  DPadUp(4), DPadRight(5), DPadDown(6), DPadLeft(7)
-        payload[20] = state['buttons1']
+        buf[40] = state['lx'] & 0xFF
+        buf[41] = state['ly'] & 0xFF
+        buf[42] = state['rx'] & 0xFF
+        buf[43] = state['ry'] & 0xFF
 
-        # Buttons byte 1 bits: L2(0), R2(1), L1(2), R1(3),
-        #                       Triangle(4), Circle(5), Cross(6), Square(7)
-        payload[21] = state['buttons2']
+        buf[44] = state['dpad_left']
+        buf[45] = state['dpad_down']
+        buf[46] = state['dpad_right']
+        buf[47] = state['dpad_up']
+        buf[48] = state['square']
+        buf[49] = state['cross']
+        buf[50] = state['circle']
+        buf[51] = state['triangle']
+        buf[52] = state['r1']
+        buf[53] = state['l1']
 
-        # PS / Touch buttons
-        payload[22] = state['ps_button']
-        payload[23] = state['touch_button']
+        buf[54] = state['r_trigger'] & 0xFF
+        buf[55] = state['l_trigger'] & 0xFF
 
-        # Sticks
-        payload[24] = state['lx'] & 0xFF
-        payload[25] = state['ly'] & 0xFF
-        payload[26] = state['rx'] & 0xFF
-        payload[27] = state['ry'] & 0xFF
+        # Touch data (56-67) stays zeroed from init
 
-        # Analog button pressure (DPad + face buttons as 0 or 255)
-        payload[28] = state['dpad_left']
-        payload[29] = state['dpad_down']
-        payload[30] = state['dpad_right']
-        payload[31] = state['dpad_up']
-        payload[32] = state['square']
-        payload[33] = state['cross']
-        payload[34] = state['circle']
-        payload[35] = state['triangle']
-        payload[36] = state['r1']
-        payload[37] = state['l1']
+        # Motion timestamp (microseconds) at payload offset 52 = buf offset 68
+        struct.pack_into('<Q', buf, 68, int(time.time() * 1_000_000))
 
-        # Analog triggers
-        payload[38] = state['r_trigger'] & 0xFF
-        payload[39] = state['l_trigger'] & 0xFF
+        # Accel/Gyro (76-99) stays zeroed from init
 
-        # Touch data (bytes 40-51) — zeroed, not applicable for GC
+        # CRC32
+        crc = zlib.crc32(buf) & 0xFFFFFFFF
+        struct.pack_into('<I', buf, 8, crc)
 
-        # Motion timestamp (microseconds) at offset 52
-        struct.pack_into('<Q', payload, 52, int(time.time() * 1_000_000))
-
-        # Accelerometer / Gyroscope (bytes 60-83) — zeroed, not applicable for GC
-
-        header = _build_header(MSG_TYPE_DATA, len(payload), self._server_id)
-        packet = header + payload
-        _finalize_crc(packet)
-        return packet
+        return buf
 
 
 # ── DSUGamepad (VirtualGamepad) ─────────────────────────────────────

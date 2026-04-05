@@ -32,6 +32,10 @@ _SW2_ZL      = 0x00800000
 _SW2_GR      = 0x01000000
 _SW2_GL      = 0x02000000
 
+_ZERO_64 = b'\x00' * 64
+_buf_bumble = bytearray(64)
+_buf_bleak = bytearray(64)
+
 
 def translate_ble_to_usb(ble_data: bytes) -> bytes:
     """Translate 63-byte BLE input report to 64-byte USB HID format.
@@ -56,11 +60,12 @@ def translate_ble_to_usb(ble_data: bytes) -> bytes:
         [14]    right trigger
     """
     if len(ble_data) < 16:
-        return b'\x00' * 64
+        return _ZERO_64
 
-    buf = bytearray(64)
+    buf = _buf_bumble
+    buf[0:4] = b'\x00\x00\x00\x00'
+    buf[12:14] = b'\x00\x00'
 
-    # Buttons: BLE uint32 LE at offset 4 -> USB bytes at [3], [4], [5]
     buttons = int.from_bytes(ble_data[4:8], 'little')
 
     b3 = 0
@@ -90,13 +95,14 @@ def translate_ble_to_usb(ble_data: bytes) -> bytes:
     if buttons & _SW2_CHAT:    b5 |= 0x10
     buf[5] = b5
 
-    # Sticks: BLE offset 10-15 -> USB offset 6-11 (same packed 12-bit format)
     buf[6:12] = ble_data[10:16]
 
-    # Triggers: BLE offset 60-61 -> USB offset 13-14
     if len(ble_data) > 61:
         buf[13] = ble_data[60]
         buf[14] = ble_data[61]
+    else:
+        buf[13] = 0
+        buf[14] = 0
 
     return bytes(buf)
 
@@ -129,9 +135,11 @@ def translate_ble_native_to_usb(ble_data: bytes) -> bytes:
         [14]    right trigger
     """
     if len(ble_data) < 11:
-        return b'\x00' * 64
+        return _ZERO_64
 
-    buf = bytearray(64)
+    buf = _buf_bleak
+    buf[0:6] = b'\x00\x00\x00\x00\x00\x00'
+    buf[12:15] = b'\x00\x00\x00'
 
     if len(ble_data) == 63:
         # 63-byte "discovered" format — button bytes map directly to USB layout

@@ -378,8 +378,6 @@ class GCControllerEnabler:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
             )
         else:
             if frozen:
@@ -394,8 +392,6 @@ class GCControllerEnabler:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
             )
 
         self._ble_reader_thread = threading.Thread(
@@ -407,7 +403,7 @@ class GCControllerEnabler:
         if self._ble_subprocess and self._ble_subprocess.poll() is None:
             try:
                 line = json.dumps(cmd, separators=(',', ':')) + '\n'
-                self._ble_subprocess.stdin.write(line)
+                self._ble_subprocess.stdin.write(line.encode('utf-8'))
                 self._ble_subprocess.stdin.flush()
             except Exception:
                 pass
@@ -446,10 +442,29 @@ class GCControllerEnabler:
         self._ble_initialized = False
 
     def _ble_event_reader(self):
-        """Read events from the BLE subprocess stdout (runs in a thread)."""
+        """Read events from the BLE subprocess stdout (runs in a thread).
+
+        Handles two formats on the binary stdout stream:
+        - Binary data packets: 0xFF + slot(1) + payload(64) = 66 bytes
+        - JSON text lines: UTF-8 encoded, terminated by newline
+        """
         try:
-            for line in self._ble_subprocess.stdout:
-                line = line.strip()
+            stdout = self._ble_subprocess.stdout
+            while True:
+                header = stdout.read(1)
+                if not header:
+                    break
+                if header[0] == 0xFF:
+                    packet = stdout.read(65)
+                    if len(packet) < 65:
+                        break
+                    si = packet[0]
+                    if 0 <= si < len(self.slots):
+                        self.slots[si].ble_data_queue.put(packet[1:65])
+                    continue
+
+                rest = stdout.readline()
+                line = (header + rest).decode('utf-8', errors='replace').strip()
                 if not line:
                     continue
                 try:
@@ -459,22 +474,12 @@ class GCControllerEnabler:
 
                 etype = event.get('e')
 
-                # Init-phase events: signal the main thread directly
                 if not self._ble_initialized and etype in (
                         'ready', 'bluez_stopped', 'open_ok', 'error'):
                     self._ble_init_result = event
                     self._ble_init_event.set()
                     continue
 
-                # Data events: put directly into slot queue (low latency)
-                if etype == 'data':
-                    si = event.get('s')
-                    if si is not None and 0 <= si < len(self.slots):
-                        data = base64.b64decode(event['d'])
-                        self.slots[si].ble_data_queue.put(data)
-                    continue
-
-                # Other runtime events: dispatch to main (Tkinter) thread
                 self.root.after(
                     0, lambda ev=event: self._handle_ble_event(ev))
         except Exception:
@@ -2071,8 +2076,6 @@ class _BleHeadlessManager:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
             )
         else:
             if frozen:
@@ -2087,8 +2090,6 @@ class _BleHeadlessManager:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
             )
 
     def send_cmd(self, cmd: dict):
@@ -2096,7 +2097,7 @@ class _BleHeadlessManager:
         if self._subprocess and self._subprocess.poll() is None:
             try:
                 line = json.dumps(cmd, separators=(',', ':')) + '\n'
-                self._subprocess.stdin.write(line)
+                self._subprocess.stdin.write(line.encode('utf-8'))
                 self._subprocess.stdin.flush()
             except Exception:
                 pass
@@ -2182,10 +2183,28 @@ class _BleHeadlessManager:
         self._reader_thread.start()
 
     def _event_reader(self, on_data, on_event):
-        """Read events from the BLE subprocess stdout (runs in a thread)."""
+        """Read events from the BLE subprocess stdout (runs in a thread).
+
+        Handles two formats on the binary stdout stream:
+        - Binary data packets: 0xFF + slot(1) + payload(64) = 66 bytes
+        - JSON text lines: UTF-8 encoded, terminated by newline
+        """
         try:
-            for line in self._subprocess.stdout:
-                line = line.strip()
+            stdout = self._subprocess.stdout
+            while True:
+                header = stdout.read(1)
+                if not header:
+                    break
+                if header[0] == 0xFF:
+                    packet = stdout.read(65)
+                    if len(packet) < 65:
+                        break
+                    si = packet[0]
+                    on_data(si, packet[1:65])
+                    continue
+
+                rest = stdout.readline()
+                line = (header + rest).decode('utf-8', errors='replace').strip()
                 if not line:
                     continue
                 try:
@@ -2195,22 +2214,12 @@ class _BleHeadlessManager:
 
                 etype = event.get('e')
 
-                # Init-phase events: signal the main thread directly
                 if not self._initialized and etype in (
                         'ready', 'bluez_stopped', 'open_ok', 'error'):
                     self._init_result = event
                     self._init_event.set()
                     continue
 
-                # Data events: put directly into slot queue (low latency)
-                if etype == 'data':
-                    si = event.get('s')
-                    if si is not None:
-                        data = base64.b64decode(event['d'])
-                        on_data(si, data)
-                    continue
-
-                # Other runtime events: dispatch to event queue
                 on_event(event)
         except Exception:
             pass
@@ -2918,7 +2927,16 @@ def main():
         default=None,
         help="force UI language (default: auto-detect from system)",
     )
+    parser.add_argument(
+        "--latency",
+        action="store_true",
+        help="print real-time latency stats to stderr (~1 line/sec per slot)",
+    )
     args = parser.parse_args()
+
+    if args.latency:
+        from .input_processor import set_latency_profiling
+        set_latency_profiling(True)
 
     setup_logging(debug=args.debug)
 

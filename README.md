@@ -12,9 +12,12 @@ A cross-platform Python/Tkinter tool that connects the [Nintendo Switch Online G
 - **USB and Bluetooth** — connect via USB HID or Bluetooth Low Energy (BLE on Linux, macOS, and Windows)
 - **Xbox 360 emulation** — virtual gamepad via vgamepad on Windows and evdev/uinput on Linux
 - **Dolphin pipe mode** — named FIFO pipes for direct Dolphin emulator integration (Linux/macOS)
+- **DSU/Cemuhook** — UDP server for emulator compatibility (Dolphin, Cemu, Yuzu, Ryujinx)
 - **Stick calibration** — octagon-based deadzone detection across 8 directional sectors
 - **Trigger calibration** — guided wizard to set base, bump, and max values per controller
 - **Headless mode** — run without a GUI for background/daemon-style operation
+- **Low-latency input pipeline** — blocking HID reads, delta-only button updates, pre-allocated buffers, and optimized BLE connection parameters
+- **Latency profiling** — built-in `--latency` flag and standalone benchmark tool for real-time input lag measurement
 - **Auto-connect** — automatically reconnect to preferred controllers on startup
 - **Persistent settings** — per-slot calibration, device preferences, and emulation mode saved to JSON
 
@@ -100,6 +103,44 @@ python -m gc_controller --headless --mode dolphin_pipe
 
 This uses saved settings to auto-connect and emulate all configured controller slots.
 
+### Latency Profiling
+
+Run with real-time latency stats printed to stderr (1 line/sec per active slot):
+```bash
+python -m gc_controller --latency
+```
+
+Output format (avg/p99/max):
+```
+[LATENCY] 125Hz | interval: 8.01/8.15/12.30ms | parse: 0.02/0.05ms | emu: 0.08/0.15ms | total: 0.10/0.18/0.25ms | drops: 0
+```
+
+- **interval** — time between consecutive reports (= hardware polling rate)
+- **parse** — raw data parsing + stick normalization
+- **emu** — virtual gamepad update (ViGEm, evdev, pipe, or DSU)
+- **total** — parse + emu combined (= total software overhead)
+- **drops** — buffered reports drained (> 0 means reports are arriving faster than processing)
+
+### Latency Benchmark Tool
+
+A standalone tool for measuring raw input latency without the full application:
+
+```bash
+# USB benchmark (auto-detect controller)
+python latency_benchmark.py --duration 15
+
+# BLE benchmark (auto-scan for controller)
+python latency_benchmark.py --ble --duration 15
+
+# BLE benchmark with specific address
+python latency_benchmark.py --ble --address XX:XX:XX:XX:XX:XX
+
+# Save detailed per-frame data to CSV
+python latency_benchmark.py --csv report.csv
+```
+
+The benchmark reports effective polling rate, interval statistics (min/avg/median/p95/p99/max), processing time, jitter analysis, and platform-specific recommendations.
+
 ## Building Executables
 
 Platform-specific build scripts are in the `platform/` directory:
@@ -155,6 +196,7 @@ src/gc_controller/
     bleak_subprocess.py     BLE subprocess for macOS/Windows (no elevated privileges)
     ble_event_loop.py       Asyncio integration helper
 pyproject.toml              Project metadata and dependencies
+latency_benchmark.py        Standalone latency measurement tool (USB + BLE)
 NSO-GameCube-Controller-Pairing-App.spec  PyInstaller spec file
 build_all.py                Unified build script
 images/
@@ -169,6 +211,75 @@ platform/
     build.bat               Windows build script
     hook-vgamepad.py        PyInstaller hook for vgamepad
 ```
+
+## Advanced: Reducing Input Latency
+
+### What's already optimized
+
+This app includes several built-in latency optimizations:
+
+- **Blocking HID reads** — no fixed `sleep()` delays; reads return as soon as data is available
+- **Queue draining** — BLE input queue is drained to the latest report, skipping stale buffered data
+- **Delta button updates** — only button state changes are sent to the virtual gamepad, avoiding redundant API calls
+- **Lock-free calibration** — the hot path reads from a cached calibration snapshot, acquiring locks only during actual calibration
+- **Pre-allocated buffers** — BLE protocol translation and DSU packet building reuse pre-allocated bytearrays instead of allocating per frame
+- **Binary IPC** — BLE subprocess data uses a raw binary protocol (66-byte packets) instead of JSON serialization
+- **Optimized BLE connection parameters** — the app requests the lowest supported connection interval on each platform:
+  - **Linux (Bumble)**: requests 7.5–15ms interval with 2M PHY
+  - **Windows 11+**: requests 7.5ms interval via WinRT `BluetoothLEPreferredConnectionParameters`
+  - **macOS**: requests low-latency mode via `CBCentralManager` when available
+
+### USB polling rate overclocking
+
+The NSO GameCube controller uses a default USB polling rate of **125 Hz** (8ms per report). For competitive play, you can overclock the polling rate to **1000 Hz** (1ms per report), reducing input latency by up to **7ms**.
+
+#### Windows — HIDUSBF
+
+1. Download [HIDUSBF](https://sweetlow.github.io/hidusbf/) (USB filter driver)
+2. Run the HIDUSBF installer/GUI as Administrator
+3. Find the NSO GameCube Controller in the device list (VID `057E`, PID `2073`)
+4. Set the polling rate to **1ms** (1000 Hz)
+5. Click **Install Service** / **Restart** to apply
+6. Verify the new polling rate in the HIDUSBF GUI or with a tool like [Mouse Rate Checker](https://www.softpedia.com/get/System/System-Miscellaneous/Mouse-Rate-Checker.shtml)
+
+> **Note:** HIDUSBF modifies the USB driver filter stack. Uninstall it from the same GUI if you want to revert. The change persists across reboots.
+
+#### Linux — usbhid kernel parameter
+
+Add a udev rule or kernel module parameter to override the polling interval:
+
+```bash
+# Global override (affects all USB HID devices)
+echo "options usbhid mousepoll=1" | sudo tee /etc/modprobe.d/usbhid.conf
+sudo modprobe -r usbhid && sudo modprobe usbhid
+
+# Verify current polling rate
+cat /sys/module/usbhid/parameters/mousepoll
+```
+
+After applying, the value should read `1` (= 1ms polling interval = 1000 Hz).
+
+> **Note:** The `mousepoll` parameter affects all USB HID devices. A value of `1` is safe for modern hardware but may increase CPU usage slightly.
+
+#### macOS
+
+macOS does not provide a user-accessible way to override USB HID polling rates. The default 125 Hz rate applies.
+
+### BLE latency considerations
+
+Bluetooth Low Energy input latency is primarily determined by the **connection interval** — the time between consecutive data packets from the controller. Typical values:
+
+| Platform | Achievable Interval | Notes |
+|----------|-------------------|-------|
+| Linux (Bumble) | 7.5–15ms | Direct HCI control, best case |
+| Windows 11+ | 7.5–15ms | WinRT API, requires compatible adapter |
+| Windows 10 | 15–30ms | No API for interval tuning |
+| macOS | 15–30ms | CoreBluetooth manages internally |
+
+For the best wireless experience:
+- Use a **dedicated USB Bluetooth adapter** with an external antenna (see [Verified Bluetooth Chipset Compatibility](#verified-bluetooth-chipset-compatibility))
+- Plug it into the **front** of your PC, as close as possible to where you sit
+- On Linux, Bumble with a good adapter provides the lowest latency
 
 ## Troubleshooting
 
