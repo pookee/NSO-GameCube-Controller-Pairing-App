@@ -1,0 +1,18 @@
+# SDL GameControllerDB mappings for the NSO GameCube Controller (VID 057e, PID 2073).
+#
+# These entries already exist in the community SDL_GameControllerDB
+# (https://github.com/mdqinc/SDL_GameControllerDB). They are included
+# here for convenience — load this file via:
+#   SDL2: SDL_GameControllerAddMappingsFromFile("gamecontrollerdb_nso_gc.txt")
+#   SDL3: SDL_AddGamepadMappingsFromFile("gamecontrollerdb_nso_gc.txt")
+#
+# The controller must be initialized first (USB bulk transfer init) for
+# these mappings to take effect.  SDL 3.4+ has a built-in HIDAPI driver
+# that handles this automatically.
+
+# Windows
+030000007e0500007320000000000000,NSO GameCube Controller,a:b1,b:b3,dpdown:b8,dpleft:b10,dpright:b9,dpup:b11,guide:b16,leftshoulder:b13,lefttrigger:b12,leftx:a0,lefty:a1~,rightshoulder:b5,righttrigger:b4,rightx:a2,righty:a3~,start:b6,x:b0,y:b2,platform:Windows,
+# macOS
+030000007e0500007320000001010000,NSO GameCube Controller,a:b1,b:b3,dpdown:b8,dpleft:b10,dpright:b9,dpup:b11,guide:b16,leftshoulder:b13,lefttrigger:b12,leftx:a0,lefty:a1~,rightshoulder:b5,righttrigger:b4,rightx:a2,righty:a3~,start:b6,x:b0,y:b2,platform:Mac OS X,
+# Linux
+030000007e0500007320000011010000,NSO GameCube Controller,a:b1,b:b3,dpdown:b8,dpleft:b10,dpright:b9,dpup:b11,guide:b16,leftshoulder:b13,lefttrigger:b12,leftx:a0,lefty:a1~,rightshoulder:b5,righttrigger:b4,rightx:a2,righty:a3~,start:b6,x:b0,y:b2,platform:Linux,

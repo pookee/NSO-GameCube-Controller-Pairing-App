@@ -9,6 +9,7 @@ Provides a unified interface for controller emulation across platforms:
 import errno
 import os
 import stat
+import struct
 import sys
 import time
 import threading
@@ -393,6 +394,230 @@ class LinuxGamepad(VirtualGamepad):
             pass
 
 
+class LinuxUhidGamepad(VirtualGamepad):
+    """Linux implementation using /dev/uhid (kernel UHID interface).
+
+    Creates a virtual HID device at the HID subsystem level, so it
+    appears in both /dev/input/ and /dev/hidraw/.  Uses an Xbox 360
+    HID report descriptor (vendor=0x045E, product=0x028E).
+
+    Falls back to LinuxGamepad (uinput) if /dev/uhid is not accessible.
+    No additional Python packages required — uses raw ioctl/write.
+    """
+
+    # Xbox 360 HID report descriptor — buttons, hat, sticks, triggers.
+    # Report layout (13 bytes total):
+    #   byte 0:     buttons [0..7]   (A B X Y LB RB Back Start)
+    #   byte 1:     buttons [8..13]  (Guide LThumb RThumb + 5 padding)
+    #   byte 2:     hat switch (4 bits) + 4 bits padding
+    #   bytes 3-4:  left stick X (int16 LE)
+    #   bytes 5-6:  left stick Y (int16 LE)
+    #   bytes 7-8:  right stick X (int16 LE)
+    #   bytes 9-10: right stick Y (int16 LE)
+    #   byte 11:    left trigger (uint8)
+    #   byte 12:    right trigger (uint8)
+    _HID_REPORT_DESC = bytes([
+        0x05, 0x01,        # Usage Page (Generic Desktop)
+        0x09, 0x05,        # Usage (Game Pad)
+        0xA1, 0x01,        # Collection (Application)
+        # -- 14 buttons --
+        0x05, 0x09,        #   Usage Page (Button)
+        0x19, 0x01,        #   Usage Minimum (1)
+        0x29, 0x0E,        #   Usage Maximum (14)
+        0x15, 0x00,        #   Logical Minimum (0)
+        0x25, 0x01,        #   Logical Maximum (1)
+        0x75, 0x01,        #   Report Size (1)
+        0x95, 0x0E,        #   Report Count (14)
+        0x81, 0x02,        #   Input (Data,Var,Abs)
+        0x95, 0x02,        #   Report Count (2)  -- padding
+        0x81, 0x01,        #   Input (Constant)
+        # -- Hat switch (D-pad) --
+        0x05, 0x01,        #   Usage Page (Generic Desktop)
+        0x09, 0x39,        #   Usage (Hat switch)
+        0x15, 0x00,        #   Logical Minimum (0)
+        0x25, 0x07,        #   Logical Maximum (7)
+        0x35, 0x00,        #   Physical Minimum (0)
+        0x46, 0x3B, 0x01,  #   Physical Maximum (315)
+        0x65, 0x14,        #   Unit (Degrees)
+        0x75, 0x04,        #   Report Size (4)
+        0x95, 0x01,        #   Report Count (1)
+        0x81, 0x42,        #   Input (Data,Var,Abs,Null)
+        0x75, 0x04,        #   Report Size (4) -- padding
+        0x95, 0x01,        #   Report Count (1)
+        0x81, 0x01,        #   Input (Constant)
+        # -- Sticks (4 x int16) --
+        0x05, 0x01,        #   Usage Page (Generic Desktop)
+        0x09, 0x30,        #   Usage (X)
+        0x09, 0x31,        #   Usage (Y)
+        0x09, 0x33,        #   Usage (Rx)
+        0x09, 0x34,        #   Usage (Ry)
+        0x16, 0x00, 0x80,  #   Logical Minimum (-32768)
+        0x26, 0xFF, 0x7F,  #   Logical Maximum (32767)
+        0x75, 0x10,        #   Report Size (16)
+        0x95, 0x04,        #   Report Count (4)
+        0x81, 0x02,        #   Input (Data,Var,Abs)
+        # -- Triggers (2 x uint8) --
+        0x09, 0x32,        #   Usage (Z)
+        0x09, 0x35,        #   Usage (Rz)
+        0x15, 0x00,        #   Logical Minimum (0)
+        0x26, 0xFF, 0x00,  #   Logical Maximum (255)
+        0x75, 0x08,        #   Report Size (8)
+        0x95, 0x02,        #   Report Count (2)
+        0x81, 0x02,        #   Input (Data,Var,Abs)
+        0xC0,              # End Collection
+    ])
+
+    # UHID kernel event types
+    _UHID_CREATE2 = 11
+    _UHID_DESTROY = 1
+    _UHID_INPUT2 = 12
+
+    # Hat switch direction table: (dx, dy) -> hat value (0xF = neutral)
+    _HAT_MAP = {
+        (0, 0): 0x0F,
+        (0, -1): 0, (1, -1): 1, (1, 0): 2, (1, 1): 3,
+        (0, 1): 4, (-1, 1): 5, (-1, 0): 6, (-1, -1): 7,
+    }
+
+    _INPUT_BUF_SIZE = 4 + 2 + 4096   # UHID_INPUT2: type(u32) + size(u16) + data(4096)
+
+    def __init__(self):
+        self._fd = os.open("/dev/uhid", os.O_RDWR)
+
+        name = b"Microsoft X-Box 360 pad"
+        rd_data = self._HID_REPORT_DESC
+
+        # UHID_CREATE2: type(u32) + name(128) + phys(64) + uniq(64)
+        #   + rd_size(u16) + bus(u16) + vendor(u32) + product(u32)
+        #   + version(u32) + country(u32) + rd_data(4096)
+        BUS_USB = 3
+        create_evt = struct.pack("<I", self._UHID_CREATE2)
+        create_evt += name.ljust(128, b'\x00')
+        create_evt += b'\x00' * 64   # phys
+        create_evt += b'\x00' * 64   # uniq
+        create_evt += struct.pack("<HHIII",
+                                  len(rd_data), BUS_USB,
+                                  0x045E, 0x028E, 0x0110, 0)
+        create_evt += rd_data.ljust(4096, b'\x00')
+
+        os.write(self._fd, create_evt)
+
+        # Pre-allocated UHID_INPUT2 event buffer (zero-filled once)
+        self._input_buf = bytearray(self._INPUT_BUF_SIZE)
+
+        # Internal state
+        self._buttons = 0          # 14-bit button field
+        self._hat = 0x0F           # neutral
+        self._lx = 0
+        self._ly = 0
+        self._rx = 0
+        self._ry = 0
+        self._lt = 0
+        self._rt = 0
+        self._dpad_x = 0
+        self._dpad_y = 0
+
+        # Button bit positions (matching the 14-button HID descriptor)
+        self._button_map = {
+            GamepadButton.A: 0,
+            GamepadButton.B: 1,
+            GamepadButton.X: 2,
+            GamepadButton.Y: 3,
+            GamepadButton.LEFT_SHOULDER: 4,
+            GamepadButton.RIGHT_SHOULDER: 5,
+            GamepadButton.BACK: 6,
+            GamepadButton.START: 7,
+            GamepadButton.GUIDE: 8,
+            GamepadButton.LEFT_THUMB: 9,
+            GamepadButton.RIGHT_THUMB: 10,
+        }
+
+    def _update_hat(self):
+        self._hat = self._HAT_MAP.get(
+            (self._dpad_x, self._dpad_y), 0x0F)
+
+    def left_joystick(self, x_value: int, y_value: int) -> None:
+        self._lx = max(-32768, min(32767, x_value))
+        self._ly = max(-32768, min(32767, -y_value))
+
+    def right_joystick(self, x_value: int, y_value: int) -> None:
+        self._rx = max(-32768, min(32767, x_value))
+        self._ry = max(-32768, min(32767, -y_value))
+
+    def left_trigger(self, value: int) -> None:
+        self._lt = max(0, min(255, value))
+
+    def right_trigger(self, value: int) -> None:
+        self._rt = max(0, min(255, value))
+
+    def press_button(self, button: GamepadButton) -> None:
+        if button in (GamepadButton.DPAD_UP, GamepadButton.DPAD_DOWN,
+                      GamepadButton.DPAD_LEFT, GamepadButton.DPAD_RIGHT):
+            self._set_dpad(button, pressed=True)
+        else:
+            bit = self._button_map.get(button)
+            if bit is not None:
+                self._buttons |= (1 << bit)
+
+    def release_button(self, button: GamepadButton) -> None:
+        if button in (GamepadButton.DPAD_UP, GamepadButton.DPAD_DOWN,
+                      GamepadButton.DPAD_LEFT, GamepadButton.DPAD_RIGHT):
+            self._set_dpad(button, pressed=False)
+        else:
+            bit = self._button_map.get(button)
+            if bit is not None:
+                self._buttons &= ~(1 << bit)
+
+    def _set_dpad(self, button: GamepadButton, pressed: bool):
+        if button == GamepadButton.DPAD_LEFT:
+            self._dpad_x = -1 if pressed else (1 if self._dpad_x == 1 else 0)
+        elif button == GamepadButton.DPAD_RIGHT:
+            self._dpad_x = 1 if pressed else (-1 if self._dpad_x == -1 else 0)
+        elif button == GamepadButton.DPAD_UP:
+            self._dpad_y = -1 if pressed else (1 if self._dpad_y == 1 else 0)
+        elif button == GamepadButton.DPAD_DOWN:
+            self._dpad_y = 1 if pressed else (-1 if self._dpad_y == -1 else 0)
+        self._update_hat()
+
+    def update(self) -> None:
+        btn_lo = self._buttons & 0xFF
+        btn_hi = (self._buttons >> 8) & 0xFF
+        hat_byte = self._hat & 0x0F
+
+        struct.pack_into("<IHBBBhhhhBB", self._input_buf, 0,
+                         self._UHID_INPUT2, 13,
+                         btn_lo, btn_hi, hat_byte,
+                         self._lx, self._ly,
+                         self._rx, self._ry,
+                         self._lt, self._rt)
+        try:
+            os.write(self._fd, self._input_buf)
+        except OSError:
+            pass
+
+    def reset(self) -> None:
+        self._buttons = 0
+        self._hat = 0x0F
+        self._lx = self._ly = self._rx = self._ry = 0
+        self._lt = self._rt = 0
+        self._dpad_x = self._dpad_y = 0
+        self.update()
+
+    def close(self) -> None:
+        try:
+            self.reset()
+        except Exception:
+            pass
+        try:
+            os.write(self._fd, struct.pack("<I", self._UHID_DESTROY))
+        except Exception:
+            pass
+        try:
+            os.close(self._fd)
+        except Exception:
+            pass
+
+
 def _get_real_home() -> str:
     """Get the real user's home directory, even when running under sudo."""
     sudo_user = os.environ.get('SUDO_USER')
@@ -604,6 +829,8 @@ def is_emulation_available(mode: str = 'xbox360') -> bool:
         except Exception:
             return False
     elif sys.platform == "linux":
+        if os.access('/dev/uhid', os.W_OK):
+            return True
         try:
             import evdev
             return os.access('/dev/uinput', os.W_OK)
@@ -658,9 +885,10 @@ def get_emulation_unavailable_reason(mode: str = 'xbox360') -> str:
         )
     elif sys.platform == "linux":
         return (
-            "Xbox 360 emulation requires python-evdev and uinput access.\n"
-            "Install evdev: pip install evdev\n"
-            "Ensure /dev/uinput is accessible (add udev rule or run as root)."
+            "Xbox 360 emulation requires either:\n"
+            "  - /dev/uhid with write access (preferred, no extra packages), or\n"
+            "  - python-evdev + /dev/uinput access (pip install evdev)\n"
+            "Add a udev rule or run as root to grant device permissions."
         )
     elif sys.platform == "darwin":
         return (
@@ -686,6 +914,11 @@ def create_gamepad(mode: str = 'xbox360', slot_index: int = 0,
     if sys.platform == "win32":
         return WindowsGamepad()
     elif sys.platform == "linux":
+        if os.access('/dev/uhid', os.W_OK):
+            try:
+                return LinuxUhidGamepad()
+            except Exception:
+                pass
         return LinuxGamepad()
     elif sys.platform == "darwin":
         raise RuntimeError(

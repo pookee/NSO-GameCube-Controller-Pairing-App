@@ -79,6 +79,7 @@ class ControllerUI:
         self.minimize_to_tray_var = tk.BooleanVar(value=slot_calibrations[0].get('minimize_to_tray', False))
         self.auto_scan_ble_var = tk.BooleanVar(value=slot_calibrations[0].get('auto_scan_ble', True))
         self.stick_deadzone_var = tk.DoubleVar(value=slot_calibrations[0].get('stick_deadzone', 0.05))
+        self.run_at_startup_var = tk.BooleanVar(value=slot_calibrations[0].get('run_at_startup', False))
 
         # Callbacks for settings dialog
         self._on_emulate_all = on_emulate_all
@@ -282,6 +283,7 @@ class ControllerUI:
             minimize_to_tray_var=self.minimize_to_tray_var,
             stick_deadzone_var=self.stick_deadzone_var,
             auto_scan_ble_var=self.auto_scan_ble_var,
+            run_at_startup_var=self.run_at_startup_var,
             on_emulate_all=self._on_emulate_all if self._on_emulate_all else lambda: None,
             on_test_rumble_all=self._on_test_rumble_all if self._on_test_rumble_all else lambda: None,
             is_any_emulating=lambda: any(self._slot_emulating),

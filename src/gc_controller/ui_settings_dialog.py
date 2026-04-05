@@ -36,6 +36,7 @@ class SettingsDialog:
                  minimize_to_tray_var: tk.BooleanVar,
                  stick_deadzone_var: tk.DoubleVar = None,
                  auto_scan_ble_var: tk.BooleanVar = None,
+                 run_at_startup_var: tk.BooleanVar = None,
                  on_emulate_all: Callable = lambda: None,
                  on_test_rumble_all: Callable = lambda: None,
                  is_any_emulating: Callable[[], bool] = lambda: False,
@@ -50,6 +51,7 @@ class SettingsDialog:
         self._minimize_to_tray_var = minimize_to_tray_var
         self._stick_deadzone_var = stick_deadzone_var
         self._auto_scan_ble_var = auto_scan_ble_var
+        self._run_at_startup_var = run_at_startup_var
         self._on_emulate_all = on_emulate_all
         self._on_test_rumble_all = on_test_rumble_all
         self._is_any_emulating = is_any_emulating
@@ -207,6 +209,19 @@ class SettingsDialog:
             text_color=T.TEXT_PRIMARY,
             font=(T.FONT_FAMILY, 14),
         ).pack(anchor=tk.W, pady=(4, 4))
+
+        # ── Run at startup ──
+        if self._run_at_startup_var is not None:
+            customtkinter.CTkCheckBox(
+                left, text=t("settings.run_at_startup"),
+                variable=self._run_at_startup_var,
+                fg_color=T.RADIO_FG,
+                hover_color=T.RADIO_HOVER,
+                checkmark_color=T.BTN_TEXT,
+                border_color=T.RADIO_BORDER,
+                text_color=T.TEXT_PRIMARY,
+                font=(T.FONT_FAMILY, 14),
+            ).pack(anchor=tk.W, pady=(4, 4))
 
         # ── Save button ──
         customtkinter.CTkButton(

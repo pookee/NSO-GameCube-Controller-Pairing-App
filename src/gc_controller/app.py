@@ -132,7 +132,7 @@ if sys.platform in ('darwin', 'linux'):
 class GCControllerEnabler:
     """Main application orchestrator for NSO GameCube Controller Pairing App"""
 
-    def __init__(self):
+    def __init__(self, start_minimized: bool = False):
         import tkinter as tk
         from tkinter import messagebox
         import customtkinter
@@ -243,6 +243,7 @@ class GCControllerEnabler:
 
         # System tray support
         self._tray_icon = None
+        self._start_minimized = start_minimized
         if _TRAY_AVAILABLE:
             self._init_tray_icon()
             # Intercept minimize to go to tray when enabled
@@ -1801,6 +1802,13 @@ class GCControllerEnabler:
         self.slot_calibrations[0]['trigger_bump_100_percent'] = self.ui.trigger_mode_var.get()
         self.slot_calibrations[0]['minimize_to_tray'] = self.ui.minimize_to_tray_var.get()
         self.slot_calibrations[0]['stick_deadzone'] = self.ui.stick_deadzone_var.get()
+        self.slot_calibrations[0]['run_at_startup'] = self.ui.run_at_startup_var.get()
+
+        from . import autostart
+        try:
+            autostart.set_enabled(self.ui.run_at_startup_var.get())
+        except Exception as e:
+            logger.warning("Failed to update autostart: %s", e)
 
         for i in range(MAX_SLOTS):
             cal = self.slot_calibrations[i]
@@ -2047,6 +2055,9 @@ class GCControllerEnabler:
 
     def run(self):
         """Start the application."""
+        if self._start_minimized and _TRAY_AVAILABLE and self._tray_icon:
+            self.root.withdraw()
+            self._tray_icon.visible = True
         self.root.mainloop()
 
 
@@ -2932,6 +2943,11 @@ def main():
         action="store_true",
         help="print real-time latency stats to stderr (~1 line/sec per slot)",
     )
+    parser.add_argument(
+        "--minimized",
+        action="store_true",
+        help="start minimized to the system tray (used by autostart)",
+    )
     args = parser.parse_args()
 
     if args.latency:
@@ -2948,7 +2964,7 @@ def main():
     elif args.headless:
         run_headless(mode_override=args.mode)
     else:
-        app = GCControllerEnabler()
+        app = GCControllerEnabler(start_minimized=args.minimized)
         app.run()
 
 

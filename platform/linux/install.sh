@@ -43,10 +43,23 @@ if command -v gtk-update-icon-cache &>/dev/null; then
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 fi
 
+# Install systemd user service for headless auto-start
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_DIR"
+cp "$SCRIPT_DIR/gc-controller.service" "$SYSTEMD_DIR/gc-controller.service"
+sed -i "s|ExecStart=.*|ExecStart=$BIN_DIR/NSO-GameCube-Controller-Pairing-App --headless|" \
+    "$SYSTEMD_DIR/gc-controller.service"
+
 echo "Installed successfully."
 echo "  Binary:  $BIN_DIR/NSO-GameCube-Controller-Pairing-App"
 echo "  Icon:    $ICON_DIR/nso-gc-controller.png"
 echo "  Desktop: $APP_DIR/nso-gc-controller.desktop"
+echo "  Service: $SYSTEMD_DIR/gc-controller.service"
 echo ""
 echo "Make sure ~/.local/bin is in your PATH, then launch from your app menu or run:"
 echo "  NSO-GameCube-Controller-Pairing-App"
+echo ""
+echo "To enable auto-start when a controller is plugged in:"
+echo "  sudo cp $SCRIPT_DIR/99-gc-controller.rules /etc/udev/rules.d/"
+echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
+echo "  systemctl --user enable gc-controller.service"
