@@ -96,6 +96,27 @@ class BleakBackend:
         """No-op — the OS BLE stack is always available in userspace."""
         pass
 
+    @staticmethod
+    def _log_connection_params(client: BleakClient, address: str):
+        """Log negotiated BLE connection parameters for latency diagnostics."""
+        parts = []
+        try:
+            parts.append(f"MTU={client.mtu_size}")
+        except Exception:
+            pass
+        if sys.platform == 'win32':
+            try:
+                from bleak.backends.winrt.client import BleakClientWinRT
+                backend = client._backend
+                if isinstance(backend, BleakClientWinRT):
+                    session = backend._session
+                    if session:
+                        status = session.session_status
+                        parts.append(f"status={status}")
+            except Exception:
+                pass
+        _log(f"  BLE connection [{address}]: {', '.join(parts) if parts else 'params not available'}")
+
     async def scan_and_connect(
         self,
         slot_index: int,
@@ -410,10 +431,10 @@ class BleakBackend:
         except Exception:
             pass
 
-        # Request lower connection interval on Windows 11+ for reduced input latency.
-        # Windows 10 defaults to 30-60ms intervals with no API to change them.
-        # Windows 11 (build 22000+) exposes ThroughputOptimized (~7.5-15ms).
+        # Request lower connection interval for reduced input latency.
         if sys.platform == 'win32':
+            # Windows 10 defaults to 30-60ms intervals with no API to change them.
+            # Windows 11 (build 22000+) exposes ThroughputOptimized (~7.5-15ms).
             try:
                 build_number = int(platform.version().split('.')[-1])
                 if build_number >= 22000:
@@ -427,8 +448,38 @@ class BleakBackend:
                             BluetoothLEPreferredConnectionParameters.throughput_optimized
                         )
                         _log("  Requested ThroughputOptimized connection parameters")
+                else:
+                    _log("  Windows 10 detected — cannot optimize BLE interval "
+                         "(30-60ms default, upgrade to Win11 for ~7.5-15ms)")
             except Exception as e:
                 _log(f"  Connection parameter optimization skipped: {e}")
+        elif sys.platform == 'darwin':
+            # macOS CoreBluetooth: no public API for connection parameters.
+            # CBCentralManager handles interval negotiation internally (~15-30ms
+            # typical). Log for diagnostic visibility.
+            try:
+                from bleak.backends.corebluetooth.client import BleakClientCoreBluetooth
+                backend = client._backend
+                if isinstance(backend, BleakClientCoreBluetooth):
+                    _log("  macOS: requesting low-latency connection parameters")
+                    try:
+                        cb_peripheral = backend._peripheral
+                        cb_central = backend._manager
+                        # CBCentralManager has no documented setConnectionLatency
+                        # but some macOS versions expose it via ObjC runtime.
+                        if hasattr(cb_central, 'setConnectionLatency_forPeripheral_'):
+                            cb_central.setConnectionLatency_forPeripheral_(0, cb_peripheral)
+                            _log("  macOS: set connection latency to LOW")
+                        else:
+                            _log("  macOS: setConnectionLatency not available "
+                                 "(interval managed by CoreBluetooth, typically ~15-30ms)")
+                    except Exception as e2:
+                        _log(f"  macOS: connection parameter request failed: {e2}")
+            except Exception as e:
+                _log(f"  macOS connection parameter optimization skipped: {e}")
+
+        # Log connection parameters for latency diagnostics
+        self._log_connection_params(client, address)
 
         # Discover services and find write/notify characteristics
         write_chars = []

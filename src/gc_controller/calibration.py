@@ -169,23 +169,19 @@ class CalibrationManager:
 
     @property
     def trigger_cal_last_left(self):
-        with self._cal_lock:
-            return self._trigger_cal_last_left
+        return self._trigger_cal_last_left
 
     @property
     def trigger_cal_last_right(self):
-        with self._cal_lock:
-            return self._trigger_cal_last_right
+        return self._trigger_cal_last_right
 
     @property
     def trigger_cal_peak_left(self):
-        with self._cal_lock:
-            return self._trigger_cal_peak_left
+        return self._trigger_cal_peak_left
 
     @property
     def trigger_cal_peak_right(self):
-        with self._cal_lock:
-            return self._trigger_cal_peak_right
+        return self._trigger_cal_peak_right
 
     def _reset_trigger_peaks(self):
         """Reset peak tracking to current instantaneous values."""
@@ -193,11 +189,16 @@ class CalibrationManager:
         self._trigger_cal_peak_right = self._trigger_cal_last_right
 
     def update_trigger_raw(self, left_trigger, right_trigger):
-        """Store latest raw trigger values and update peaks for calibration."""
-        with self._cal_lock:
-            self._trigger_cal_last_left = left_trigger
-            self._trigger_cal_last_right = right_trigger
-            if self.trigger_cal_step > 0:
+        """Store latest raw trigger values and update peaks for calibration.
+
+        Lock-free in normal play (trigger_cal_step == 0) since Python's GIL
+        makes int assignment atomic. Only acquires the lock during the
+        calibration wizard when peak tracking is active.
+        """
+        self._trigger_cal_last_left = left_trigger
+        self._trigger_cal_last_right = right_trigger
+        if self.trigger_cal_step > 0:
+            with self._cal_lock:
                 if left_trigger > self._trigger_cal_peak_left:
                     self._trigger_cal_peak_left = left_trigger
                 if right_trigger > self._trigger_cal_peak_right:

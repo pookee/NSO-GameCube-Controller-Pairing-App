@@ -5,11 +5,12 @@ Manages the HID read thread and processes raw controller data, feeding
 calibration tracking, emulation updates, and UI update scheduling.
 """
 
+import collections
 import logging
 import queue
 import sys
-import time
 import threading
+import time
 from typing import Callable, Optional
 
 from .controller_constants import BUTTONS, normalize, apply_deadzone
@@ -18,6 +19,14 @@ from .emulation_manager import EmulationManager
 
 IS_WINDOWS = sys.platform == 'win32'
 logger = logging.getLogger(__name__)
+
+_latency_profiling = False
+
+
+def set_latency_profiling(enabled: bool):
+    """Enable or disable real-time latency profiling output."""
+    global _latency_profiling
+    _latency_profiling = enabled
 
 
 def _translate_report_0x05(data) -> list:
@@ -122,6 +131,16 @@ class InputProcessor:
         self._ui_update_counter = 0
         self._debug_log_counter = 0
 
+        # Latency profiling state
+        self._prof_last_read_t = 0.0
+        self._prof_intervals = collections.deque(maxlen=250)
+        self._prof_process_times = collections.deque(maxlen=250)
+        self._prof_emu_times = collections.deque(maxlen=250)
+        self._prof_total_times = collections.deque(maxlen=250)
+        self._prof_drain_counts = collections.deque(maxlen=250)
+        self._prof_last_print = 0.0
+        self._prof_report_count = 0
+
     @property
     def stop_event(self) -> threading.Event:
         """Expose the stop event for reconnect logic to check."""
@@ -151,37 +170,39 @@ class InputProcessor:
             self._read_thread.join(timeout=1.0)
 
     def _read_loop(self):
-        """Main HID reading loop with nonblocking drain."""
+        """Main HID reading loop using blocking read for minimal latency."""
         try:
             device = self._device_getter()
             if not device:
                 return
-            device.set_nonblocking(1)
             while self.is_reading and not self._stop_event.is_set():
                 if not device:
                     break
                 try:
-                    # Drain all buffered reports, only keep the latest
-                    latest = None
-                    for _ in range(64):
-                        data = device.read(64)
-                        if data:
-                            latest = data
-                        else:
-                            break
-                    if latest:
-                        if IS_WINDOWS:
-                            if latest[0] == 0x05:
-                                # Uninitialized NSO format (no libusb on
-                                # Windows → USB init commands never sent).
-                                latest = _translate_report_0x05(latest)
+                    data = device.read(64, timeout_ms=8)
+                    t_read = time.perf_counter()
+                    if not data:
+                        continue
+                    latest = data
+                    drain_count = 0
+                    device.set_nonblocking(1)
+                    try:
+                        for _ in range(63):
+                            more = device.read(64)
+                            if more:
+                                latest = more
+                                drain_count += 1
                             else:
-                                # Initialized GC format with report ID
-                                # prepended by Windows HIDAPI — strip it.
-                                latest = latest[1:]
-                        self._process_data(latest)
-                    else:
-                        time.sleep(0.004)
+                                break
+                    finally:
+                        device.set_nonblocking(0)
+                    if IS_WINDOWS:
+                        if latest[0] == 0x05:
+                            latest = _translate_report_0x05(latest)
+                        else:
+                            latest = latest[1:]
+                    self._process_data(latest, t_read=t_read,
+                                       drain_count=drain_count)
                 except Exception as e:
                     if self.is_reading:
                         print(f"Read error: {e}")
@@ -190,26 +211,27 @@ class InputProcessor:
             self._on_error(f"Read loop error: {e}")
         finally:
             self.is_reading = False
-            # If we weren't asked to stop, this was an unexpected disconnect
             if not self._stop_event.is_set() and self._on_disconnect:
                 self._on_disconnect()
 
     def _read_loop_ble(self):
-        """BLE reading loop — drains the queue, keeps only the latest packet."""
+        """BLE reading loop — blocks on queue for immediate wakeup on data."""
         try:
             while self.is_reading and not self._stop_event.is_set():
-                # Drain queue, keep latest
-                latest = None
+                try:
+                    latest = self._ble_queue.get(timeout=0.008)
+                except queue.Empty:
+                    continue
+                t_read = time.perf_counter()
+                drain_count = 0
                 try:
                     while True:
                         latest = self._ble_queue.get_nowait()
+                        drain_count += 1
                 except queue.Empty:
                     pass
-
-                if latest:
-                    self._process_data(latest)
-                else:
-                    time.sleep(0.004)
+                self._process_data(latest, t_read=t_read,
+                                   drain_count=drain_count)
         except Exception as e:
             self._on_error(f"BLE read loop error: {e}")
         finally:
@@ -217,30 +239,27 @@ class InputProcessor:
             if not self._stop_event.is_set() and self._on_disconnect:
                 self._on_disconnect()
 
-    def _process_data(self, data: list):
+    def _process_data(self, data: list, t_read: float = 0.0,
+                       drain_count: int = 0):
         """Process raw controller data and route to subsystems."""
         if len(data) < 15:
             return
 
-        # Extract analog stick values
         left_stick_x = data[6] | ((data[7] & 0x0F) << 8)
         left_stick_y = ((data[7] >> 4) | (data[8] << 4))
         right_stick_x = data[9] | ((data[10] & 0x0F) << 8)
         right_stick_y = ((data[10] >> 4) | (data[11] << 4))
 
-        # Track during stick calibration
         if self._cal_mgr.stick_calibrating:
             self._cal_mgr.track_stick_data(left_stick_x, left_stick_y,
                                            right_stick_x, right_stick_y)
 
-        # Normalize stick values
         cal = self._calibration
         left_x_norm = normalize(left_stick_x, cal['stick_left_center_x'], cal['stick_left_range_x'])
         left_y_norm = normalize(left_stick_y, cal['stick_left_center_y'], cal['stick_left_range_y'])
         right_x_norm = normalize(right_stick_x, cal['stick_right_center_x'], cal['stick_right_range_x'])
         right_y_norm = normalize(right_stick_y, cal['stick_right_center_y'], cal['stick_right_range_y'])
 
-        # Apply deadzone (only for emulation output, not for calibration)
         if not self._cal_mgr.stick_calibrating:
             dz = cal.get('stick_deadzone', 0.05)
             left_x_norm = apply_deadzone(left_x_norm, dz)
@@ -248,26 +267,44 @@ class InputProcessor:
             right_x_norm = apply_deadzone(right_x_norm, dz)
             right_y_norm = apply_deadzone(right_y_norm, dz)
 
-        # Process buttons
         button_states = {}
         for button in BUTTONS:
             if len(data) > button.byte_index:
                 pressed = (data[button.byte_index] & button.mask) != 0
                 button_states[button.name] = pressed
 
-        # Extract trigger values
         left_trigger = data[13] if len(data) > 13 else 0
         right_trigger = data[14] if len(data) > 14 else 0
 
-        # Store raw values for trigger calibration wizard
         self._cal_mgr.update_trigger_raw(left_trigger, right_trigger)
 
-        # Forward to emulation (hot path)
+        t_emu_start = time.perf_counter()
         if self._emu_mgr.is_emulating and self._emu_mgr.gamepad:
             self._emu_mgr.update(left_x_norm, left_y_norm, right_x_norm, right_y_norm,
                                  left_trigger, right_trigger, button_states)
+        t_done = time.perf_counter()
 
-        # Periodic debug log (~1/sec at 250Hz)
+        # Latency profiling (zero overhead when disabled)
+        if _latency_profiling and t_read > 0:
+            self._prof_report_count += 1
+            if self._prof_last_read_t > 0:
+                interval_us = int((t_read - self._prof_last_read_t) * 1_000_000)
+                self._prof_intervals.append(interval_us)
+            self._prof_last_read_t = t_read
+
+            process_us = int((t_emu_start - t_read) * 1_000_000)
+            emu_us = int((t_done - t_emu_start) * 1_000_000)
+            total_us = int((t_done - t_read) * 1_000_000)
+            self._prof_process_times.append(process_us)
+            self._prof_emu_times.append(emu_us)
+            self._prof_total_times.append(total_us)
+            self._prof_drain_counts.append(drain_count)
+
+            now = t_done
+            if now - self._prof_last_print >= 1.0:
+                self._prof_last_print = now
+                self._print_latency_stats()
+
         self._debug_log_counter += 1
         if self._debug_log_counter % 250 == 0:
             pressed = [b for b, v in button_states.items() if v]
@@ -276,9 +313,41 @@ class InputProcessor:
                          left_x_norm, left_y_norm, right_x_norm, right_y_norm,
                          pressed or "none")
 
-        # UI updates (throttled)
         self._ui_update_counter += 1
         if self._ui_update_counter % 3 == 0:
             self._on_ui_update(left_x_norm, left_y_norm, right_x_norm, right_y_norm,
                                left_trigger, right_trigger, button_states,
                                self._cal_mgr.stick_calibrating)
+
+    def _print_latency_stats(self):
+        """Print a single line of latency stats to stderr."""
+        def _fmt(deq):
+            if not deq:
+                return "---", "---", "---"
+            s = sorted(deq)
+            avg = sum(s) // len(s)
+            p99_idx = min(int(len(s) * 0.99), len(s) - 1)
+            return f"{avg/1000:.2f}", f"{s[p99_idx]/1000:.2f}", f"{s[-1]/1000:.2f}"
+
+        int_avg, int_p99, int_max = _fmt(self._prof_intervals)
+        proc_avg, proc_p99, _ = _fmt(self._prof_process_times)
+        emu_avg, emu_p99, _ = _fmt(self._prof_emu_times)
+        total_avg, total_p99, total_max = _fmt(self._prof_total_times)
+
+        hz = "---"
+        if self._prof_intervals:
+            avg_us = sum(self._prof_intervals) / len(self._prof_intervals)
+            if avg_us > 0:
+                hz = f"{1_000_000 / avg_us:.0f}"
+
+        drains = sum(self._prof_drain_counts)
+
+        print(
+            f"[LATENCY] {hz:>4}Hz | "
+            f"interval: {int_avg}/{int_p99}/{int_max}ms | "
+            f"parse: {proc_avg}/{proc_p99}ms | "
+            f"emu: {emu_avg}/{emu_p99}ms | "
+            f"total: {total_avg}/{total_p99}/{total_max}ms | "
+            f"drops: {drains}",
+            file=sys.stderr, flush=True
+        )

@@ -428,3 +428,7 @@ CLAUDE.md
 
 # Local app settings
 gc_controller_settings.json
+gc_controller_settings.backup.json
+
+# Latency test output
+latency_output.txt

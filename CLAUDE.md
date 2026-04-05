@@ -15,8 +15,14 @@ pip install -e .
 # Run the application
 python -m gc_controller
 
+# Run with latency profiling (prints per-slot stats to stderr)
+python -m gc_controller --latency
+
 # Run headless (no GUI)
 python -m gc_controller --headless [--mode dolphin_pipe|dsu]
+
+# Standalone latency benchmark (USB or BLE)
+python latency_benchmark.py [--ble] [--duration 15] [--csv report.csv]
 
 # Build platform executables (PyInstaller)
 python build_all.py
@@ -46,7 +52,7 @@ GUI (customtkinter) → App Orchestrator (app.py)
 - **app.py** — Main orchestrator, multi-slot management, settings persistence, BLE subprocess coordination
 - **controller_slot.py** — Encapsulates all managers for one controller slot
 - **connection_manager.py** — USB enumeration/init (pyusb), HID open/close (hidapi), path-based device claiming
-- **input_processor.py** — Per-slot HID read thread, button/stick remapping, handles USB and BLE input formats
+- **input_processor.py** — Per-slot HID read thread, button/stick remapping, handles USB and BLE input formats, optional latency profiling via `set_latency_profiling()`
 - **emulation_manager.py** — Creates platform-specific virtual gamepads, hot-path input forwarding
 - **virtual_gamepad.py** — Abstract base + platform implementations (Windows: vgamepad/ViGEmBus, Linux: evdev/uinput, Dolphin: named FIFO pipes)
 - **dsu_server.py** — DSU/Cemuhook UDP server + `DSUGamepad` implementation for emulator compatibility (Dolphin, Cemu, Yuzu, Ryujinx)
@@ -82,13 +88,14 @@ GUI (customtkinter) → App Orchestrator (app.py)
 
 ## Important Patterns
 
+- **Latency optimizations**: Blocking HID reads (no sleep), BLE queue draining, delta-only button updates, lock-free calibration hot path, pre-allocated buffers (BLE protocol + DSU packets), binary IPC for BLE subprocess data, platform-specific BLE connection interval tuning
 - **Thread safety**: Calibration modifications use locks; UI updates go through `root.after()` to stay on the Tkinter main thread
 - **Device claiming**: Path-based to prevent two slots from connecting to the same physical controller
 - **Report formats**: Standard GC USB binary format vs Windows NSO (report ID 0x05, different button encoding handled via `_translate_report_0x05()`) vs BLE (63-byte native Switch format)
 - **Platform detection**: Uses `sys.platform` throughout (`win32`, `linux`, `darwin`)
 - **BLE state**: Lazy initialization on first pair; subprocess messaging via events/queues
 - **PyInstaller builds**: vgamepad DLL paths need special handling in frozen builds via `sys._MEIPASS`
-- **Entry points**: `--ble-subprocess` and `--bleak-subprocess` flags in `__main__.py` dispatch to BLE subprocess runners instead of the main app
+- **Entry points**: `--ble-subprocess` and `--bleak-subprocess` flags in `__main__.py` dispatch to BLE subprocess runners instead of the main app; `--latency` enables per-slot profiling output to stderr
 - **System tray**: Uses `pystray` with platform-specific backends (AppIndicator on Linux, native on macOS/Windows). Optional — gracefully disabled if unavailable.
 
 ## Frozen Build Checklist
