@@ -16,7 +16,7 @@ pip install -e .
 python -m gc_controller
 
 # Run headless (no GUI)
-python -m gc_controller --headless [--mode dolphin_pipe]
+python -m gc_controller --headless [--mode dolphin_pipe|dsu]
 
 # Build platform executables (PyInstaller)
 python build_all.py
@@ -49,8 +49,9 @@ GUI (customtkinter) → App Orchestrator (app.py)
 - **input_processor.py** — Per-slot HID read thread, button/stick remapping, handles USB and BLE input formats
 - **emulation_manager.py** — Creates platform-specific virtual gamepads, hot-path input forwarding
 - **virtual_gamepad.py** — Abstract base + platform implementations (Windows: vgamepad/ViGEmBus, Linux: evdev/uinput, Dolphin: named FIFO pipes)
+- **dsu_server.py** — DSU/Cemuhook UDP server + `DSUGamepad` implementation for emulator compatibility (Dolphin, Cemu, Yuzu, Ryujinx)
 - **calibration.py** — 8-sector octagon stick calibration, 3-point trigger calibration, thread-safe with locks
-- **settings_manager.py** — JSON persistence with v1→v2 migration, per-slot calibration storage
+- **settings_manager.py** — JSON persistence with v1→v2→v3 migration, global-only settings storage
 - **controller_constants.py** — Shared button/stick constants and mappings
 
 ### BLE subsystem (`src/gc_controller/ble/`)
@@ -59,6 +60,7 @@ GUI (customtkinter) → App Orchestrator (app.py)
 - **bumble_backend.py** — Linux: direct HCI transport via Bumble (requires elevated privileges via pkexec)
 - **bleak_backend.py** — macOS/Windows: userspace BLE via Bleak
 - **ble_subprocess.py / bleak_subprocess.py** — Privileged subprocess runners
+- **ble_event_loop.py** — Singleton asyncio daemon thread shared across BLE operations
 - BLE requires MTU ≥185 bytes; input reports are 63 bytes on GATT characteristic 0x000E
 
 ### UI modules
@@ -66,16 +68,17 @@ GUI (customtkinter) → App Orchestrator (app.py)
 - **controller_ui.py** — Per-slot controller cards with calibration/connection UI
 - **ui_controller_canvas.py** — Stick/trigger visualization canvas
 - **ui_ble_dialog.py** — BLE device picker dialog
+- **ui_ble_scan_wizard.py** — Two-step differential BLE scan wizard (baseline scan then pairing scan to identify new controllers)
 - **ui_settings_dialog.py** — Settings dialog
 - **ui_theme.py** — CustomTkinter theme configuration
 
 ## Platform-Specific Notes
 
-| Platform | Xbox 360 Emulation | Dolphin Pipe | BLE Backend | Notes |
-|----------|-------------------|--------------|-------------|-------|
-| Windows  | vgamepad (ViGEmBus) | N/A | Bleak | USB rumble needs WinUSB driver (Zadig) |
-| Linux    | evdev/uinput | Named FIFO | Bumble (HCI) | BLE needs elevated privileges; BlueZ stopped while Bumble active |
-| macOS    | Not supported | Named FIFO | Bleak | Use Dolphin pipe mode |
+| Platform | Xbox 360 Emulation | Dolphin Pipe | DSU (Cemuhook) | BLE Backend | Notes |
+|----------|-------------------|--------------|----------------|-------------|-------|
+| Windows  | vgamepad (ViGEmBus) | N/A | UDP server | Bleak | USB rumble needs WinUSB driver (Zadig) |
+| Linux    | evdev/uinput | Named FIFO | UDP server | Bumble (HCI) | BLE needs elevated privileges; BlueZ stopped while Bumble active |
+| macOS    | Not supported | Named FIFO | UDP server | Bleak | Use Dolphin pipe or DSU mode |
 
 ## Important Patterns
 

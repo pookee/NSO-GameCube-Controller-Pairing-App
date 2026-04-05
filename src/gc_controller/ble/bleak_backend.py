@@ -274,6 +274,51 @@ class BleakBackend:
         _log(f"scan_only: found {len(result)} device(s)")
         return result
 
+    async def start_scan(self, on_device_found: Callable[[dict], None]):
+        """Start a continuous BLE scan. Calls on_device_found for each new device."""
+        await self.stop_scan()
+        self._stream_devices: dict[str, BLEDevice] = {}
+        self._stream_adv: dict[str, AdvertisementData] = {}
+        self._stream_seen: set[str] = set()
+        self._stream_callback = on_device_found
+
+        def _on_detected(device: BLEDevice, adv: AdvertisementData):
+            addr = device.address.upper()
+            self._stream_devices[addr] = device
+            self._stream_adv[addr] = adv
+            if addr not in self._stream_seen:
+                self._stream_seen.add(addr)
+                rssi = adv.rssi if adv and adv.rssi is not None else -999
+                mfg = {}
+                svc_uuids = []
+                if adv:
+                    mfg = {str(cid): val.hex() for cid, val in
+                           getattr(adv, 'manufacturer_data', {}).items()}
+                    svc_uuids = list(getattr(adv, 'service_uuids', []))
+                self._stream_callback({
+                    'address': addr,
+                    'name': device.name or '',
+                    'rssi': rssi,
+                    'manufacturer_data': mfg,
+                    'service_uuids': svc_uuids,
+                })
+
+        self._active_scanner = BleakScanner(detection_callback=_on_detected)
+        await self._active_scanner.start()
+        _log("start_scan: scanner started")
+
+    async def stop_scan(self):
+        """Stop the continuous scan and cache results for connect_device."""
+        scanner = getattr(self, '_active_scanner', None)
+        if scanner is not None:
+            try:
+                await scanner.stop()
+            except Exception:
+                pass
+            self._active_scanner = None
+            self._last_scan = dict(getattr(self, '_stream_devices', {}))
+            _log(f"stop_scan: cached {len(self._last_scan)} device(s)")
+
     async def connect_device(
         self,
         address: str,
@@ -288,6 +333,20 @@ class BleakBackend:
         Returns the device address on success, None on failure.
         """
         address = _normalize_address(address) or address
+
+        # Clean up any stale connection to this address
+        old_client = self._clients.pop(address, None)
+        if old_client and old_client.is_connected:
+            _log(f"connect_device: disconnecting stale session for {address}")
+            on_status("Clearing previous connection...")
+            try:
+                await old_client.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        self._write_chars.pop(address, None)
+        self._cmd_chars.pop(address, None)
+
         ble_device = self._last_scan.get(address)
 
         if not ble_device:

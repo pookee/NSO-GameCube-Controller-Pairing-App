@@ -40,6 +40,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Save",
         "fr": "Enregistrer",
     },
+    "btn.cancel_cal": {
+        "en": "Cancel",
+        "fr": "Annuler",
+    },
     "btn.show_all": {
         "en": "Show All",
         "fr": "Tout afficher",
@@ -103,8 +107,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "fr": "Aucune manette non attribuée trouvée",
     },
     "ui.new_controller_cal": {
-        "en": "New controller \u2014 starting calibration...",
-        "fr": "Nouvelle manette \u2014 démarrage de la calibration...",
+        "en": "Connected \u2014 click Calibration Wizard to configure",
+        "fr": "Connectée \u2014 cliquez sur Assistant de calibration pour configurer",
     },
 
     # ── BLE statuses ──────────────────────────────────────────────
@@ -164,9 +168,19 @@ _STRINGS: dict[str, dict[str, str]] = {
         "fr": "Appuyez sur le bouton de synchronisation de votre manette\n"
               "et maintenez-le. Quand la LED clignote, cliquez sur Scanner.",
     },
+    "scan.live_instructions": {
+        "en": "Press the pairing button on your controller.\n"
+              "It will appear here automatically when detected.",
+        "fr": "Appuyez sur le bouton de synchronisation de votre manette.\n"
+              "Elle apparaîtra ici automatiquement une fois détectée.",
+    },
     "scan.scanning": {
         "en": "Scanning for controllers...",
         "fr": "Recherche de manettes...",
+    },
+    "scan.found_n": {
+        "en": "{n} controller(s) detected — select and click Connect",
+        "fr": "{n} manette(s) détectée(s) — sélectionnez et cliquez Connecter",
     },
     "scan.no_controllers": {
         "en": "No Controllers Found",
@@ -227,20 +241,20 @@ _STRINGS: dict[str, dict[str, str]] = {
         "fr": "Relâchez les deux gâchettes, puis cliquez Continuer",
     },
     "cal.trigger_left_bump": {
-        "en": "Press LEFT trigger fully, then release and click Continue",
-        "fr": "Appuyez à fond sur la gâchette GAUCHE, relâchez, puis cliquez Continuer",
+        "en": "LEFT trigger \u2192 press to max \u25b6 BEFORE the click \u25c0 then release",
+        "fr": "Gâchette GAUCHE \u2192 enfoncez au max \u25b6 AVANT le clic \u25c0 puis relâchez",
     },
     "cal.trigger_left_max": {
-        "en": "Press LEFT trigger fully past the click, then release and click Continue",
-        "fr": "Appuyez à fond sur la gâchette GAUCHE au-delà du clic, relâchez, puis cliquez Continuer",
+        "en": "LEFT trigger \u2192 press fully \u25b6 PAST the click \u25c0 then release",
+        "fr": "Gâchette GAUCHE \u2192 enfoncez à fond \u25b6 AU-DELÀ du clic \u25c0 puis relâchez",
     },
     "cal.trigger_right_bump": {
-        "en": "Press RIGHT trigger fully, then release and click Continue",
-        "fr": "Appuyez à fond sur la gâchette DROITE, relâchez, puis cliquez Continuer",
+        "en": "RIGHT trigger \u2192 press to max \u25b6 BEFORE the click \u25c0 then release",
+        "fr": "Gâchette DROITE \u2192 enfoncez au max \u25b6 AVANT le clic \u25c0 puis relâchez",
     },
     "cal.trigger_right_max": {
-        "en": "Press RIGHT trigger fully past the click, then release and click Continue",
-        "fr": "Appuyez à fond sur la gâchette DROITE au-delà du clic, relâchez, puis cliquez Continuer",
+        "en": "RIGHT trigger \u2192 press fully \u25b6 PAST the click \u25c0 then release",
+        "fr": "Gâchette DROITE \u2192 enfoncez à fond \u25b6 AU-DELÀ du clic \u25c0 puis relâchez",
     },
     "cal.trigger_completed": {
         "en": "Trigger calibration completed",
@@ -271,6 +285,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "settings.trigger_mode": {
         "en": "Trigger Mode",
         "fr": "Mode des gâchettes",
+    },
+    "settings.stick_deadzone": {
+        "en": "Stick Deadzone",
+        "fr": "Zone morte des sticks",
     },
     "settings.auto_connect_usb": {
         "en": "Auto-connect USB at startup",
