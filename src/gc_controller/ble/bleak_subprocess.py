@@ -9,6 +9,8 @@ Protocol (JSON lines):
     {"cmd": "open"}
     {"cmd": "scan_connect", "slot_index": 0, "target_address": "..."}
     {"cmd": "scan_devices", "slot_index": 0}
+    {"cmd": "scan_start", "slot_index": 0}
+    {"cmd": "scan_stop"}
     {"cmd": "connect_device", "slot_index": 0, "address": "..."}
     {"cmd": "disconnect", "slot_index": 0, "address": "..."}
     {"cmd": "shutdown"}
@@ -22,6 +24,7 @@ Protocol (JSON lines):
     {"e": "connected", "s": <slot>, "mac": "..."}
     {"e": "connect_error", "s": <slot>, "msg": "..."}
     {"e": "devices_found", "s": <slot>, "devices": [...]}
+    {"e": "device_detected", "s": <slot>, "device": {...}}
     {"e": "data", "s": <slot>, "d": "<base64>"}
     {"e": "disconnected", "s": <slot>}
 """
@@ -121,6 +124,25 @@ async def do_scan_devices(backend, slot_index):
         pass
     except Exception as ex:
         send({"e": "connect_error", "s": slot_index, "msg": str(ex)})
+
+
+async def do_start_scan(backend, slot_index):
+    """Start a continuous scan, sending device_detected events as devices appear."""
+    def on_device(dev):
+        send({"e": "device_detected", "s": slot_index, "device": dev})
+
+    try:
+        await backend.start_scan(on_device_found=on_device)
+    except Exception as ex:
+        send({"e": "connect_error", "s": slot_index, "msg": str(ex)})
+
+
+async def do_stop_scan(backend):
+    """Stop the continuous scan."""
+    try:
+        await backend.stop_scan()
+    except Exception:
+        pass
 
 
 async def do_connect_device(backend, slot_index, address, slot_ids=None):
@@ -229,6 +251,14 @@ def main():
                     connect_tasks[si].cancel()
                 connect_tasks[si] = asyncio.create_task(
                     do_scan_devices(backend, si))
+
+            elif action == "scan_start":
+                si = cmd["slot_index"]
+                await do_stop_scan(backend)
+                asyncio.create_task(do_start_scan(backend, si))
+
+            elif action == "scan_stop":
+                await do_stop_scan(backend)
 
             elif action == "connect_device":
                 si = cmd["slot_index"]

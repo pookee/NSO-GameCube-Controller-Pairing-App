@@ -12,7 +12,7 @@ import time
 import threading
 from typing import Callable, Optional
 
-from .controller_constants import BUTTONS, normalize
+from .controller_constants import BUTTONS, normalize, apply_deadzone
 from .calibration import CalibrationManager
 from .emulation_manager import EmulationManager
 
@@ -239,6 +239,14 @@ class InputProcessor:
         left_y_norm = normalize(left_stick_y, cal['stick_left_center_y'], cal['stick_left_range_y'])
         right_x_norm = normalize(right_stick_x, cal['stick_right_center_x'], cal['stick_right_range_x'])
         right_y_norm = normalize(right_stick_y, cal['stick_right_center_y'], cal['stick_right_range_y'])
+
+        # Apply deadzone (only for emulation output, not for calibration)
+        if not self._cal_mgr.stick_calibrating:
+            dz = cal.get('stick_deadzone', 0.05)
+            left_x_norm = apply_deadzone(left_x_norm, dz)
+            left_y_norm = apply_deadzone(left_y_norm, dz)
+            right_x_norm = apply_deadzone(right_x_norm, dz)
+            right_y_norm = apply_deadzone(right_y_norm, dz)
 
         # Process buttons
         button_states = {}

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Keys stored in the global section of the config file.
 _GLOBAL_KEYS = {
     'auto_connect', 'auto_scan_ble', 'emulation_mode', 'trigger_bump_100_percent',
-    'minimize_to_tray', 'known_ble_devices',
+    'minimize_to_tray', 'stick_deadzone', 'known_ble_devices',
 }
 
 

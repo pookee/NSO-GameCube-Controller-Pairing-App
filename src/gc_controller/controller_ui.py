@@ -40,6 +40,7 @@ class SlotUI:
 
         # Calibration
         self.cal_wizard_btn = None
+        self.cal_cancel_btn = None
 
 
 class ControllerUI:
@@ -52,6 +53,7 @@ class ControllerUI:
                  on_cal_wizard: Callable[[int], None],
                  on_save: Callable,
                  on_pair: Optional[Callable[[int], None]] = None,
+                 on_cal_cancel: Optional[Callable[[int], None]] = None,
                  on_emulate_all: Optional[Callable] = None,
                  on_test_rumble_all: Optional[Callable] = None,
                  ble_available: bool = False,
@@ -76,6 +78,7 @@ class ControllerUI:
         self.trigger_mode_var = tk.BooleanVar(value=slot_calibrations[0]['trigger_bump_100_percent'])
         self.minimize_to_tray_var = tk.BooleanVar(value=slot_calibrations[0].get('minimize_to_tray', False))
         self.auto_scan_ble_var = tk.BooleanVar(value=slot_calibrations[0].get('auto_scan_ble', True))
+        self.stick_deadzone_var = tk.DoubleVar(value=slot_calibrations[0].get('stick_deadzone', 0.05))
 
         # Callbacks for settings dialog
         self._on_emulate_all = on_emulate_all
@@ -102,13 +105,14 @@ class ControllerUI:
         self._BLE_SCAN_LED_SEQ = [0, 1, 2, 3, 2, 1]  # bounce pattern
 
         self.slots: List[SlotUI] = []
-        self._setup(on_connect, on_cal_wizard, on_save, on_pair)
+        self._setup(on_connect, on_cal_wizard, on_save, on_pair, on_cal_cancel)
 
         self._initializing = False
 
     # ── Setup ────────────────────────────────────────────────────────
 
-    def _setup(self, on_connect, on_cal_wizard, on_save, on_pair=None):
+    def _setup(self, on_connect, on_cal_wizard, on_save, on_pair=None,
+               on_cal_cancel=None):
         """Create the user interface with tabview tabs."""
         outer_frame = customtkinter.CTkFrame(self._root, fg_color="transparent")
         outer_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
@@ -160,7 +164,7 @@ class ControllerUI:
 
             slot_ui = SlotUI()
             self._build_tab(i, slot_ui, on_connect,
-                            on_cal_wizard, on_pair)
+                            on_cal_wizard, on_pair, on_cal_cancel)
             self.slots.append(slot_ui)
 
         # Track global setting changes — auto-save when changed
@@ -178,10 +182,11 @@ class ControllerUI:
         self.trigger_mode_var.trace_add('write', _on_setting_changed)
         self.minimize_to_tray_var.trace_add('write', _on_setting_changed)
         self.auto_scan_ble_var.trace_add('write', _on_setting_changed)
+        self.stick_deadzone_var.trace_add('write', _on_setting_changed)
 
     def _build_tab(self, index: int, slot_ui: SlotUI,
                    on_connect, on_cal_wizard,
-                   on_pair=None):
+                   on_pair=None, on_cal_cancel=None):
         """Build one controller tab."""
         tab_name = self._tab_names[index]
         tab = self.tabview.tab(tab_name)
@@ -199,7 +204,7 @@ class ControllerUI:
         slot_ui.status_label = customtkinter.CTkLabel(
             visual_frame, text=t("ui.ready"),
             text_color="#FFFFFF", font=(T.FONT_FAMILY, 14),
-            anchor="center",
+            anchor="center", wraplength=500,
         )
         slot_ui.status_label.pack(fill=tk.X, padx=10, pady=(2, 8))
 
@@ -250,6 +255,17 @@ class ControllerUI:
         )
         slot_ui.cal_wizard_btn.pack(side=tk.LEFT, padx=(4, 0), expand=True, fill=tk.X)
 
+        if on_cal_cancel:
+            slot_ui.cal_cancel_btn = customtkinter.CTkButton(
+                btn_frame, text=t("btn.cancel_cal"),
+                command=lambda i=index: on_cal_cancel(i),
+                fg_color=T.GC_PURPLE_SURFACE,
+                hover_color=T.GC_PURPLE_LIGHT,
+                text_color=T.TEXT_PRIMARY,
+                corner_radius=12, height=32,
+                font=(T.FONT_FAMILY, 14),
+            )
+
         # Configure grid weights
         tab.grid_columnconfigure(0, weight=1)
 
@@ -264,6 +280,7 @@ class ControllerUI:
             trigger_mode_var=self.trigger_mode_var,
             auto_connect_var=self.auto_connect_var,
             minimize_to_tray_var=self.minimize_to_tray_var,
+            stick_deadzone_var=self.stick_deadzone_var,
             auto_scan_ble_var=self.auto_scan_ble_var,
             on_emulate_all=self._on_emulate_all if self._on_emulate_all else lambda: None,
             on_test_rumble_all=self._on_test_rumble_all if self._on_test_rumble_all else lambda: None,

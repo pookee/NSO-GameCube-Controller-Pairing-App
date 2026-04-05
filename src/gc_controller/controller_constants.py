@@ -83,6 +83,7 @@ DEFAULT_CALIBRATION = {
     'stick_left_center_y': 2048, 'stick_left_range_y': 2048,
     'stick_right_center_x': 2048, 'stick_right_range_x': 2048,
     'stick_right_center_y': 2048, 'stick_right_range_y': 2048,
+    'stick_deadzone': 0.05,
     'auto_connect': True,
     'auto_scan_ble': True,
     'minimize_to_tray': True,
@@ -113,3 +114,18 @@ BLE_RUMBLE_TID_BASE = 0x50        # Transaction ID base (lower nibble increments
 def normalize(raw, center, range_val):
     """Normalize a raw stick value to [-1.0, 1.0]."""
     return max(-1.0, min(1.0, (raw - center) / max(range_val, 1)))
+
+
+def apply_deadzone(value: float, deadzone: float) -> float:
+    """Apply a scaled deadzone to a normalized axis value.
+
+    Values inside the deadzone map to 0. Values outside are rescaled
+    to cover the full [0, 1] range so there is no jump at the edge.
+    """
+    if deadzone <= 0.0:
+        return value
+    mag = abs(value)
+    if mag < deadzone:
+        return 0.0
+    scaled = (mag - deadzone) / (1.0 - deadzone)
+    return max(-1.0, min(1.0, scaled if value > 0 else -scaled))

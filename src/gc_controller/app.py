@@ -161,7 +161,7 @@ class GCControllerEnabler:
             self.slot_calibrations[0]['known_ble_devices'] = {}
 
         # Propagate per-slot global settings from slot 0 to all other slots
-        for key in ('trigger_bump_100_percent', 'emulation_mode'):
+        for key in ('trigger_bump_100_percent', 'emulation_mode', 'stick_deadzone'):
             val = self.slot_calibrations[0].get(key)
             if val is not None:
                 for i in range(1, MAX_SLOTS):
@@ -198,6 +198,7 @@ class GCControllerEnabler:
         self._ble_init_result = None
         self._ble_pair_mode = {}  # slot_index -> 'pair' | 'reconnect' | 'autoscan'
         self._diff_scan_callback = {}  # slot_index -> completion callback
+        self._scan_stream_callback: dict[int, callable] = {}
         self._ble_known_scan_slot = None  # slot being scanned for known-addr matching
 
         # Auto-scan state
@@ -219,6 +220,7 @@ class GCControllerEnabler:
             on_cal_wizard=self.calibration_wizard_step,
             on_save=self.save_settings,
             on_pair=self.pair_controller if self._ble_available else None,
+            on_cal_cancel=self.cancel_calibration,
             on_emulate_all=self.toggle_emulation_all,
             on_test_rumble_all=self.test_rumble_all,
             ble_available=self._ble_available,
@@ -309,9 +311,8 @@ class GCControllerEnabler:
         self.ui.update_tab_status(slot_index, connected=True, emulating=False)
         self.toggle_emulation(slot_index)
 
-        # Auto-start calibration wizard for uncalibrated controllers
         if self._needs_calibration(slot_index):
-            self.root.after(500, lambda si=slot_index: self._start_auto_calibration(si))
+            self.ui.update_status(slot_index, t("ui.new_controller_cal"))
 
     def _reset_rumble(self, slot_index: int):
         """Send rumble OFF if currently ON and reset rumble state."""
@@ -335,9 +336,11 @@ class GCControllerEnabler:
         slot = self.slots[slot_index]
         sui = self.ui.slots[slot_index]
 
-        # Stop live trigger display and cancel in-progress trigger calibration
+        # Stop live trigger display and cancel in-progress calibration
         self._stop_trigger_cal_live(slot_index)
         slot.cal_mgr.trigger_cal_cancel()
+        self._show_cal_cancel(slot_index, False)
+        sui.cal_wizard_btn.configure(text=t("ui.cal_wizard"))
 
         # If BLE-connected, use BLE disconnect path
         if slot.ble_connected:
@@ -514,6 +517,11 @@ class GCControllerEnabler:
 
         elif etype == 'devices_found' and si is not None:
             self._on_devices_found(si, event.get('devices', []))
+
+        elif etype == 'device_detected' and si is not None:
+            cb = self._scan_stream_callback.get(si)
+            if cb:
+                cb(event.get('device', {}))
 
         elif etype == 'disconnected' and si is not None:
             logger.info("BLE disconnected: slot=%d", si)
@@ -817,13 +825,12 @@ class GCControllerEnabler:
                 sui.pair_btn.configure(text=t("btn.disconnect"), state='normal')
             sui.connect_btn.configure(state='disabled')
             self.ui.update_ble_status(slot_index, t("ble.connected", mac=mac))
-            self.ui.update_status(slot_index, t("ui.connected_ble"))
+            if self._needs_calibration(slot_index):
+                self.ui.update_status(slot_index, t("ui.new_controller_cal"))
+            else:
+                self.ui.update_status(slot_index, t("ui.connected_ble"))
             self.ui.update_tab_status(slot_index, connected=True, emulating=False)
             self.toggle_emulation(slot_index)
-
-            # Auto-start calibration wizard for uncalibrated controllers
-            if self._needs_calibration(slot_index):
-                self.root.after(500, lambda si=slot_index: self._start_auto_calibration(si))
 
             # Ensure auto-scan is running after successful pair
             if not self._auto_scan_active and self._ble_initialized:
@@ -929,24 +936,32 @@ class GCControllerEnabler:
 
     def _show_controller_scan(self, slot_index: int,
                               exclude_addresses: list[str] | None = None):
-        """Launch the single-scan controller discovery dialog."""
+        """Launch the live-scan controller discovery dialog."""
         from .ui_ble_scan_wizard import BLEControllerScanDialog
 
         self._ble_pair_mode[slot_index] = 'wizard'
 
-        def on_scan(completion_cb):
-            self._diff_scan_callback[slot_index] = completion_cb
+        def on_start_scan():
             self._send_ble_cmd({
-                "cmd": "scan_devices",
+                "cmd": "scan_start",
                 "slot_index": slot_index,
             })
 
+        def on_stop_scan():
+            self._scan_stream_callback.pop(slot_index, None)
+            self._send_ble_cmd({"cmd": "scan_stop"})
+
         dialog = BLEControllerScanDialog(
-            self.root, on_scan=on_scan,
+            self.root,
+            on_start_scan=on_start_scan,
+            on_stop_scan=on_stop_scan,
             exclude_addresses=set(exclude_addresses or ()))
+
+        self._scan_stream_callback[slot_index] = dialog.add_device
+
         chosen_address = dialog.show()
 
-        self._diff_scan_callback.pop(slot_index, None)
+        self._scan_stream_callback.pop(slot_index, None)
 
         sui = self.ui.slots[slot_index]
 
@@ -1650,17 +1665,6 @@ class GCControllerEnabler:
         """Check if a slot has default (uncalibrated) stick calibration."""
         return self.slot_calibrations[slot_index].get('stick_left_octagon') is None
 
-    def _start_auto_calibration(self, slot_index: int):
-        """Start the calibration wizard automatically for a newly connected controller."""
-        if not self.slots[slot_index].is_connected:
-            return
-        # Wait until the controller is actually producing HID data before starting
-        if self._latest_ui_data[slot_index] is None:
-            self.root.after(500, lambda si=slot_index: self._start_auto_calibration(si))
-            return
-        self.ui.update_status(slot_index, t("ui.new_controller_cal"))
-        self.calibration_wizard_step(slot_index)
-
     def calibration_wizard_step(self, slot_index: int):
         """Unified calibration wizard: sticks first, then triggers, one button."""
         slot = self.slots[slot_index]
@@ -1679,6 +1683,7 @@ class GCControllerEnabler:
                 _step, _btn, status_text = result
                 sui.cal_wizard_btn.configure(text=t("btn.continue"))
                 self.ui.update_status(slot_index, status_text)
+                self._show_cal_cancel(slot_index, True)
                 self._start_trigger_cal_live(slot_index)
 
         elif slot.cal_mgr.trigger_cal_step > 0:
@@ -1688,6 +1693,7 @@ class GCControllerEnabler:
                 self.ui.update_status(slot_index, status_text)
                 if step == 0:
                     self._stop_trigger_cal_live(slot_index)
+                    self._show_cal_cancel(slot_index, False)
                     sui.cal_wizard_btn.configure(text=t("ui.cal_wizard"))
                     self.ui.draw_trigger_markers(slot_index)
                     self._auto_save()
@@ -1699,6 +1705,7 @@ class GCControllerEnabler:
                 self.ui.set_calibration_mode(slot_index, True)
                 slot.cal_mgr.start_stick_calibration()
                 sui.cal_wizard_btn.configure(text=t("btn.continue"))
+                self._show_cal_cancel(slot_index, True)
                 self.ui.update_status(slot_index, t("cal.sticks_instruction"))
             else:
                 result = slot.cal_mgr.trigger_cal_next_step()
@@ -1706,7 +1713,39 @@ class GCControllerEnabler:
                     _step, _btn, status_text = result
                     sui.cal_wizard_btn.configure(text=t("btn.continue"))
                     self.ui.update_status(slot_index, status_text)
+                    self._show_cal_cancel(slot_index, True)
                     self._start_trigger_cal_live(slot_index)
+
+    def cancel_calibration(self, slot_index: int):
+        """Cancel any in-progress calibration (sticks or triggers)."""
+        slot = self.slots[slot_index]
+        sui = self.ui.slots[slot_index]
+        logger.info("Slot %d: calibration cancelled by user", slot_index)
+
+        if slot.cal_mgr.stick_calibrating:
+            slot.cal_mgr.stick_calibrating = False
+            self.ui.set_calibration_mode(slot_index, False)
+            self.ui.redraw_octagons(slot_index)
+
+        if slot.cal_mgr.trigger_cal_step > 0:
+            slot.cal_mgr.trigger_cal_cancel()
+            self._stop_trigger_cal_live(slot_index)
+            self.ui.draw_trigger_markers(slot_index)
+
+        self._show_cal_cancel(slot_index, False)
+        sui.cal_wizard_btn.configure(text=t("ui.cal_wizard"))
+        self.ui.update_status(slot_index, t("ui.ready"))
+
+    def _show_cal_cancel(self, slot_index: int, show: bool):
+        """Show or hide the calibration cancel button."""
+        sui = self.ui.slots[slot_index]
+        if sui.cal_cancel_btn is None:
+            return
+        if show:
+            if not sui.cal_cancel_btn.winfo_ismapped():
+                sui.cal_cancel_btn.pack(side=self._tk.LEFT, padx=(4, 0))
+        else:
+            sui.cal_cancel_btn.pack_forget()
 
     def _start_trigger_cal_live(self, slot_index: int):
         """Start periodic display of live trigger values during calibration."""
@@ -1734,7 +1773,7 @@ class GCControllerEnabler:
             instruction = t(key) if key else ""
             self.ui.update_status(
                 slot_index,
-                f"{instruction}  [L={left} peak={peak_l}  R={right} peak={peak_r}]")
+                f"{instruction}\nL={left} (max={peak_l})  R={right} (max={peak_r})")
             self._trigger_cal_live_timers[slot_index] = self.root.after(
                 100, _tick)
 
@@ -1756,11 +1795,13 @@ class GCControllerEnabler:
         self.slot_calibrations[0]['emulation_mode'] = self.ui.emu_mode_var.get()
         self.slot_calibrations[0]['trigger_bump_100_percent'] = self.ui.trigger_mode_var.get()
         self.slot_calibrations[0]['minimize_to_tray'] = self.ui.minimize_to_tray_var.get()
+        self.slot_calibrations[0]['stick_deadzone'] = self.ui.stick_deadzone_var.get()
 
         for i in range(MAX_SLOTS):
             cal = self.slot_calibrations[i]
             cal['trigger_bump_100_percent'] = self.ui.trigger_mode_var.get()
             cal['emulation_mode'] = self.ui.emu_mode_var.get()
+            cal['stick_deadzone'] = self.ui.stick_deadzone_var.get()
             self.slots[i].cal_mgr.refresh_cache()
 
             # Save per-device calibration back to the BLE device registry
@@ -1873,6 +1914,25 @@ class GCControllerEnabler:
         # Start hidden — only visible when minimize-to-tray is active
         self._tray_icon.visible = False
 
+        # Ensure tray icon is removed on any exit (Ctrl+C, SIGTERM, etc.)
+        import atexit
+        atexit.register(self._cleanup_tray)
+        if sys.platform == 'win32':
+            try:
+                signal.signal(signal.SIGBREAK, lambda *_: self._cleanup_tray())
+            except (OSError, AttributeError):
+                pass
+
+    def _cleanup_tray(self):
+        """Remove tray icon — called via atexit/signal for clean exit."""
+        icon = self._tray_icon
+        if icon is not None:
+            self._tray_icon = None
+            try:
+                icon.stop()
+            except Exception:
+                pass
+
     def _on_tray_setting_changed(self):
         """Called when the minimize_to_tray setting is toggled."""
         if not self.ui.minimize_to_tray_var.get() and self._tray_icon:
@@ -1937,12 +1997,7 @@ class GCControllerEnabler:
         self._stop_auto_scan()
 
         # Stop tray icon
-        if self._tray_icon:
-            try:
-                self._tray_icon.stop()
-            except Exception:
-                pass
-            self._tray_icon = None
+        self._cleanup_tray()
 
         for i in range(MAX_SLOTS):
             self._reset_rumble(i)
