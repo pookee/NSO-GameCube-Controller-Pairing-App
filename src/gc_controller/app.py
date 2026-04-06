@@ -176,6 +176,16 @@ class GCControllerEnabler:
         if 'device_links' not in self.slot_calibrations[0]:
             self.slot_calibrations[0]['device_links'] = {}
 
+        # Clear stale BLE slot_assignments from previous sessions.
+        # On macOS, CoreBluetooth UUIDs are session-dependent and can change,
+        # so persisting them across restarts causes wrong slot assignments.
+        # Within a session, assignments are re-created as controllers connect,
+        # preserving slot stability for disconnect/reconnect cycles.
+        assignments = self.slot_calibrations[0]['slot_assignments']
+        stale_ble = [k for k in assignments if k.startswith('ble:')]
+        for k in stale_ble:
+            del assignments[k]
+
         # Propagate per-slot global settings from slot 0 to all other slots
         for key in ('trigger_bump_100_percent', 'emulation_mode', 'stick_deadzone'):
             val = self.slot_calibrations[0].get(key)
@@ -213,6 +223,7 @@ class GCControllerEnabler:
         self._ble_init_event = threading.Event()
         self._ble_init_result = None
         self._ble_pair_mode = {}  # slot_index -> 'pair' | 'reconnect' | 'autoscan'
+        self._ble_slot_remap = {}  # subprocess_slot -> actual UI slot (when reassigned)
         self._diff_scan_callback = {}  # slot_index -> completion callback
         self._scan_stream_callback: dict[int, callable] = {}
         self._ble_known_scan_slot = None  # slot being scanned for known-addr matching
@@ -380,6 +391,14 @@ class GCControllerEnabler:
             if v == device_identity:
                 return k
         return None
+
+    def _select_slot_tab(self, slot_index: int):
+        """Switch the UI tab view to show the given slot."""
+        try:
+            tab_name = self.ui._tab_names[slot_index]
+            self.ui.tabview.set(tab_name)
+        except Exception:
+            pass
 
     def _check_dual_connection(self, slot_index: int):
         """Check if the device on this slot has a linked partner on another slot.
@@ -650,6 +669,7 @@ class GCControllerEnabler:
                     pass
             self._ble_subprocess = None
         self._ble_initialized = False
+        self._ble_slot_remap.clear()
 
     def _ble_event_reader(self):
         """Read events from the BLE subprocess stdout (runs in a thread).
@@ -668,7 +688,7 @@ class GCControllerEnabler:
                     packet = stdout.read(65)
                     if len(packet) < 65:
                         break
-                    si = packet[0]
+                    si = self._ble_slot_remap.get(packet[0], packet[0])
                     if 0 <= si < len(self.slots):
                         self.slots[si].ble_data_queue.put(packet[1:65])
                     continue
@@ -750,8 +770,10 @@ class GCControllerEnabler:
                 cb(event.get('device', {}))
 
         elif etype == 'disconnected' and si is not None:
-            logger.info("BLE disconnected: slot=%d", si)
-            self._on_ble_disconnect(si)
+            actual_si = self._ble_slot_remap.get(si, si)
+            logger.info("BLE disconnected: subprocess_slot=%d actual_slot=%d",
+                        si, actual_si)
+            self._on_ble_disconnect(actual_si)
 
         elif etype == 'error':
             self._messagebox.showerror(
@@ -1064,10 +1086,11 @@ class GCControllerEnabler:
             slot = self.slots[slot_index]
             sui = self.ui.slots[slot_index]
 
-            # Update the BLE controller's LED if the slot changed
+            # Update the BLE controller's LED and data routing if the slot changed
             if subprocess_slot != slot_index:
                 logger.info("Reassigned BLE from subprocess slot %d → slot %d, "
                             "updating LED", subprocess_slot, slot_index)
+                self._ble_slot_remap[subprocess_slot] = slot_index
                 self._send_ble_cmd({
                     "cmd": "set_led",
                     "slot_index": subprocess_slot,
@@ -1097,6 +1120,7 @@ class GCControllerEnabler:
                 self.ui.update_status(slot_index, t("ui.connected_ble"))
             self.ui.update_tab_status(
                 slot_index, connected=True, emulating=False, connection_mode='ble')
+            self._select_slot_tab(slot_index)
             self.toggle_emulation(slot_index)
             self._check_dual_connection(slot_index)
 
@@ -1405,8 +1429,11 @@ class GCControllerEnabler:
 
     def _pick_auto_scan_slot(self):
         """Pick the first free slot for auto-scan. Returns slot index or None."""
+        subprocess_slots_in_use = set(self._ble_slot_remap.keys())
         for i in range(MAX_SLOTS):
-            if not self.slots[i].is_connected and i not in self._ble_pair_mode:
+            if (not self.slots[i].is_connected
+                    and i not in self._ble_pair_mode
+                    and i not in subprocess_slots_in_use):
                 return i
         return None
 
@@ -1442,11 +1469,11 @@ class GCControllerEnabler:
                         5000, self._auto_scan_tick)
                 return
 
-        # Resolve the best free slot for this device
+        # Resolve the best slot for this device (respects persistent
+        # slot preferences for reconnection stability).
         dev_id = make_ble_device_identity(mac)
         target = self._resolve_ble_target_slot(slot_index, dev_id)
         if target is None:
-            # No free slot — disconnect and retry later
             logger.info("Auto-scan: %s connected but no free slot", mac)
             self._send_ble_cmd({
                 "cmd": "disconnect",
@@ -1472,6 +1499,7 @@ class GCControllerEnabler:
         if subprocess_slot != slot_index:
             logger.info("Auto-scan: reassigned BLE from subprocess slot %d → "
                         "slot %d, updating LED", subprocess_slot, slot_index)
+            self._ble_slot_remap[subprocess_slot] = slot_index
             self._send_ble_cmd({
                 "cmd": "set_led",
                 "slot_index": subprocess_slot,
@@ -1498,6 +1526,7 @@ class GCControllerEnabler:
         self.ui.update_ble_status(slot_index, t("ble.connected", mac=mac))
         self.ui.update_tab_status(
             slot_index, connected=True, emulating=False, connection_mode='ble')
+        self._select_slot_tab(slot_index)
         self.toggle_emulation(slot_index)
         self._check_dual_connection(slot_index)
 
@@ -1594,6 +1623,11 @@ class GCControllerEnabler:
             self._auto_scan_slot = None
         self._ble_pair_mode.pop(slot_index, None)
 
+        # Remove any data routing remap that pointed to this slot
+        stale = [k for k, v in self._ble_slot_remap.items() if v == slot_index]
+        for k in stale:
+            del self._ble_slot_remap[k]
+
         # Check if a USB controller just connected on another slot —
         # if so, it's likely the same physical controller switching
         # from BLE to USB.  Migrate USB to this slot silently.
@@ -1682,6 +1716,7 @@ class GCControllerEnabler:
         if subprocess_slot != slot_index:
             logger.info("BLE reconnect: reassigned from subprocess slot %d → "
                         "slot %d, updating LED", subprocess_slot, slot_index)
+            self._ble_slot_remap[subprocess_slot] = slot_index
             self._send_ble_cmd({
                 "cmd": "set_led",
                 "slot_index": subprocess_slot,
@@ -1702,6 +1737,7 @@ class GCControllerEnabler:
         self.ui.update_ble_status(slot_index, t("ble.connected", mac=mac))
         self.ui.update_tab_status(
             slot_index, connected=True, emulating=False, connection_mode='ble')
+        self._select_slot_tab(slot_index)
 
         if slot.reconnect_was_emulating:
             slot.reconnect_was_emulating = False
