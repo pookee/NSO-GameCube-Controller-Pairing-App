@@ -107,7 +107,8 @@ def _normalize_address(addr):
 
 
 async def do_scan_connect(backend, slot_index, target_address,
-                          exclude_addresses=None, slot_ids=None):
+                          exclude_addresses=None, slot_ids=None,
+                          connect_timeout=None):
     """Run scan_and_connect as a background asyncio task."""
     target_address = _normalize_address(target_address)
     pq = PipeQueue(slot_index)
@@ -120,6 +121,10 @@ async def do_scan_connect(backend, slot_index, target_address,
             slot_ids.pop(_si, None)
         send({"e": "disconnected", "s": _si})
 
+    kwargs = {}
+    if connect_timeout is not None:
+        kwargs['connect_timeout'] = connect_timeout
+
     try:
         identifier = await backend.scan_and_connect(
             slot_index=slot_index,
@@ -128,6 +133,7 @@ async def do_scan_connect(backend, slot_index, target_address,
             on_disconnect=on_disconnect,
             target_address=target_address,
             exclude_addresses=exclude_addresses,
+            **kwargs,
         )
         if identifier:
             if slot_ids is not None:
@@ -271,7 +277,8 @@ def main():
                 connect_tasks[si] = asyncio.create_task(
                     do_scan_connect(backend, si, cmd.get("target_address"),
                                     cmd.get("exclude_addresses"),
-                                    slot_ids=slot_ids))
+                                    slot_ids=slot_ids,
+                                    connect_timeout=cmd.get("connect_timeout")))
 
             elif action == "scan_devices":
                 si = cmd["slot_index"]

@@ -511,7 +511,7 @@ class GCControllerEnabler:
 
         slot.input_proc.start()
 
-        sui.connect_btn.configure(text="Disconnect USB")
+        sui.connect_btn.configure(text=t("ui.disconnect_usb"))
         if sui.pair_btn:
             sui.pair_btn.configure(state='disabled')
         self.ui.update_tab_status(
@@ -563,7 +563,7 @@ class GCControllerEnabler:
         slot.device_path = None
         slot.device_identity = None
 
-        sui.connect_btn.configure(text="Connect USB")
+        sui.connect_btn.configure(text=t("ui.connect_usb"))
         if sui.pair_btn:
             sui.pair_btn.configure(state='normal')
         self.ui.update_status(slot_index, t("ui.ready"))
@@ -755,7 +755,7 @@ class GCControllerEnabler:
 
         elif etype == 'error':
             self._messagebox.showerror(
-                "BLE Error", event.get('msg', 'Unknown error'))
+                t("error.ble"), event.get('msg', 'Unknown error'))
 
     # ── BLE ───────────────────────────────────────────────────────────
 
@@ -780,17 +780,14 @@ class GCControllerEnabler:
 
         if sys.platform == 'linux' and not shutil.which('pkexec'):
             self._messagebox.showerror(
-                "BLE Error",
-                "pkexec is required for Bluetooth LE.\n\n"
-                "Install with:\n"
-                "  sudo apt install policykit-1")
+                t("error.ble"), t("error.ble_pkexec"))
             return False
 
         try:
             self._start_ble_subprocess()
         except Exception as e:
             self._messagebox.showerror(
-                "BLE Error", f"Failed to start BLE service:\n{e}")
+                t("error.ble"), t("error.ble_start_failed", error=e))
             return False
 
         # Wait for subprocess to start (user authenticates via pkexec on Linux)
@@ -798,9 +795,7 @@ class GCControllerEnabler:
         if not result or result.get('e') != 'ready':
             self._cleanup_ble()
             self._messagebox.showerror(
-                "BLE Error",
-                "BLE service failed to start.\n\n"
-                "Authentication may have been cancelled.")
+                t("error.ble"), t("error.ble_auth_cancelled"))
             return False
 
         # Stop BlueZ (must release HCI adapter for Bumble)
@@ -817,9 +812,7 @@ class GCControllerEnabler:
             msg = result.get('msg', 'Unknown error') if result else 'Timeout'
             self._cleanup_ble()
             self._messagebox.showerror(
-                "BLE Error",
-                f"Failed to initialize BLE:\n{msg}\n\n"
-                "Make sure a Bluetooth adapter is connected.")
+                t("error.ble"), t("error.ble_adapter", msg=msg))
             return False
 
         self._ble_initialized = True
@@ -1331,10 +1324,13 @@ class GCControllerEnabler:
         self._auto_scan_timer_id = None
 
         if not self._auto_scan_active or not self._ble_initialized:
+            logger.debug("Auto-scan tick skipped (active=%s, init=%s)",
+                         self._auto_scan_active, self._ble_initialized)
             return
 
         # Don't scan while another auto-scan is in-flight
         if self._auto_scan_pending:
+            logger.debug("Auto-scan tick deferred (pending in-flight)")
             self._auto_scan_timer_id = self.root.after(
                 5000, self._auto_scan_tick)
             return
@@ -1384,8 +1380,10 @@ class GCControllerEnabler:
         # On Windows, bonded devices are invisible to BLE scans — target
         # a specific known address so the Bleak backend will attempt a
         # direct connection when the target is not found in scan results.
-        # On macOS, CoreBluetooth's peripheral cache is unreliable, so a
-        # blind scan (no target) with handshake identification works better.
+        # On macOS, CoreBluetooth UUIDs can become stale after re-pairing
+        # or cache invalidation.  A blind scan with Nintendo device
+        # filtering is more reliable than targeting a potentially stale UUID
+        # (which wastes 20s on a failed direct-connect attempt).
         # On Linux (Bumble), a target address skips scanning and connects
         # directly, which is faster.
         if sys.platform == 'darwin':
@@ -1402,6 +1400,7 @@ class GCControllerEnabler:
             "slot_index": slot_idx,
             "target_address": target,
             "exclude_addresses": list(connected_addrs),
+            "connect_timeout": 8,
         })
 
     def _pick_auto_scan_slot(self):
@@ -1414,25 +1413,34 @@ class GCControllerEnabler:
     def _on_auto_scan_connected(self, slot_index: int, mac: str):
         """Handle successful auto-scan connection.
 
-        Verifies the connected MAC is in the known list. If it's an unknown
-        controller, disconnects it (user must use Pair for new controllers).
+        On Linux/Windows, verifies the connected MAC is in the known list.
+        On macOS, CoreBluetooth UUIDs are session-dependent and can change
+        after the controller sleeps/wakes, so we accept any device that passed
+        the scan's Nintendo filter + handshake verification.  The new UUID
+        is added to known_ble_devices automatically.
         """
         self._auto_scan_pending = False
         self._auto_scan_slot = None
 
-        # Verify the connected controller is known
+        # Verify the connected controller is known (skip on macOS where
+        # CB UUIDs are unstable — the Nintendo device filter in
+        # scan_and_connect already ensures only real controllers connect).
         known_upper = set(a.upper() for a in self._get_known_ble_addresses())
         if mac and mac.upper() not in known_upper:
-            # Unknown controller — disconnect and retry
-            self._send_ble_cmd({
-                "cmd": "disconnect",
-                "slot_index": slot_index,
-                "address": mac,
-            })
-            if self._auto_scan_active:
-                self._auto_scan_timer_id = self.root.after(
-                    5000, self._auto_scan_tick)
-            return
+            if sys.platform == 'darwin':
+                logger.info("Auto-scan: new CB UUID %s — accepting "
+                            "(macOS UUIDs are session-dependent)", mac)
+            else:
+                # Unknown controller — disconnect and retry
+                self._send_ble_cmd({
+                    "cmd": "disconnect",
+                    "slot_index": slot_index,
+                    "address": mac,
+                })
+                if self._auto_scan_active:
+                    self._auto_scan_timer_id = self.root.after(
+                        5000, self._auto_scan_tick)
+                return
 
         # Resolve the best free slot for this device
         dev_id = make_ble_device_identity(mac)
@@ -1514,7 +1522,7 @@ class GCControllerEnabler:
                 8000, self._auto_scan_tick)
 
     def _disconnect_ble(self, slot_index: int):
-        """Disconnect BLE on a specific slot."""
+        """Disconnect BLE on a specific slot (user-initiated)."""
         slot = self.slots[slot_index]
         sui = self.ui.slots[slot_index]
 
@@ -1524,6 +1532,10 @@ class GCControllerEnabler:
 
         self._reset_rumble(slot_index)
         slot.input_proc.stop()
+        # Ensure stop_event is set even if stop() returned early (input proc
+        # already stopped by an earlier unexpected disconnect).  This tells
+        # any pending _attempt_ble_reconnect loop to abort.
+        slot.input_proc.stop_event.set()
         slot.emu_mgr.stop()
 
         if slot.ble_address and self._ble_subprocess:
@@ -1567,6 +1579,10 @@ class GCControllerEnabler:
 
         slot.reconnect_was_emulating = slot.emu_mgr.is_emulating
         slot.input_proc.stop()
+        # Clear stop_event so _attempt_ble_reconnect doesn't mistake this
+        # for a user-initiated disconnect (stop() sets it, but here the
+        # disconnect is unexpected — we WANT to reconnect).
+        slot.input_proc.stop_event.clear()
         if slot.emu_mgr.is_emulating:
             slot.emu_mgr.stop()
 
@@ -1614,7 +1630,7 @@ class GCControllerEnabler:
             self.ui.reset_slot_ui(slot_index)
             if self.ui.slots[slot_index].pair_btn:
                 self.ui.slots[slot_index].pair_btn.configure(
-                    text="Pair New Controller", state='normal')
+                    text=t("ui.pair_wireless"), state='normal')
             self.ui.slots[slot_index].connect_btn.configure(state='normal')
             self.ui.update_tab_status(slot_index, connected=False, emulating=False)
 
@@ -1729,7 +1745,7 @@ class GCControllerEnabler:
                 path_str = path.decode('utf-8', errors='replace')
                 self.slot_calibrations[slot_idx]['preferred_device_path'] = path_str
                 slot.input_proc.start()
-                sui.connect_btn.configure(text="Disconnect USB")
+                sui.connect_btn.configure(text=t("ui.disconnect_usb"))
                 if sui.pair_btn:
                     sui.pair_btn.configure(state='disabled')
                 self.ui.update_tab_status(
@@ -1902,7 +1918,7 @@ class GCControllerEnabler:
                 self.slot_calibrations[slot_index]['preferred_device_path'] = \
                     path.decode('utf-8', errors='replace')
                 slot.input_proc.start()
-                sui.connect_btn.configure(text="Disconnect USB")
+                sui.connect_btn.configure(text=t("ui.disconnect_usb"))
                 if sui.pair_btn:
                     sui.pair_btn.configure(state='disabled')
                 self.ui.update_tab_status(
@@ -1966,7 +1982,7 @@ class GCControllerEnabler:
         usb_slot_obj.device_path = None
         usb_slot_obj.device_identity = None
         usb_slot_obj.connection_mode = 'usb'
-        usb_sui.connect_btn.configure(text="Connect USB")
+        usb_sui.connect_btn.configure(text=t("ui.connect_usb"))
         if usb_sui.pair_btn:
             usb_sui.pair_btn.configure(state='normal')
         self.ui.update_status(usb_slot, t("ui.ready"))
@@ -1987,7 +2003,7 @@ class GCControllerEnabler:
                 saved_path.decode('utf-8', errors='replace')
 
         target_slot.input_proc.start()
-        target_sui.connect_btn.configure(text="Disconnect USB")
+        target_sui.connect_btn.configure(text=t("ui.disconnect_usb"))
         if target_sui.pair_btn:
             target_sui.pair_btn.configure(state='disabled')
         self.ui.update_status(ble_slot, t("ui.reconnected"))
@@ -2023,7 +2039,7 @@ class GCControllerEnabler:
             slot.emu_mgr.stop()
 
         self.ui.update_status(slot_index, t("ui.disconnected_reconnecting"))
-        sui.connect_btn.configure(text="Connect USB")
+        sui.connect_btn.configure(text=t("ui.connect_usb"))
         if sui.pair_btn:
             sui.pair_btn.configure(state='normal')
         self.ui.update_tab_status(slot_index, connected=False, emulating=False)
@@ -2091,7 +2107,7 @@ class GCControllerEnabler:
                 hid_info = path_to_info.get(target_path, {'path': target_path})
                 slot.device_identity = make_usb_device_identity(hid_info)
                 slot.input_proc.start()
-                sui.connect_btn.configure(text="Disconnect USB")
+                sui.connect_btn.configure(text=t("ui.disconnect_usb"))
                 if sui.pair_btn:
                     sui.pair_btn.configure(state='disabled')
                 self.ui.update_status(slot_index, t("ui.reconnected"))
@@ -2135,7 +2151,7 @@ class GCControllerEnabler:
             self._toggle_emulation_inner(slot_index)
         except Exception as e:
             self._messagebox.showerror(
-                "Emulation Error", f"Unexpected error: {e}")
+                t("error.emulation"), t("error.emu_unexpected", error=e))
 
     def _toggle_emulation_inner(self, slot_index: int):
         """Inner implementation of toggle_emulation."""
@@ -2155,9 +2171,9 @@ class GCControllerEnabler:
 
             if not is_emulation_available(mode):
                 self._messagebox.showerror(
-                    "Error",
-                    f"Emulation not available for mode '{mode}'.\n"
-                    + get_emulation_unavailable_reason(mode))
+                    t("error.generic"),
+                    t("error.emu_unavailable", mode=mode,
+                      reason=get_emulation_unavailable_reason(mode)))
                 return
 
             if mode == 'dolphin_pipe':
@@ -2234,11 +2250,11 @@ class GCControllerEnabler:
         try:
             slot.emu_mgr.start('xbox360', slot_index=slot_index,
                                rumble_callback=self._make_rumble_callback(slot_index))
-            self.ui.update_emu_status(slot_index, "Connected & Ready")
+            self.ui.update_emu_status(slot_index, t("emu.connected_ready"))
             self.ui.update_tab_status(slot_index, connected=True, emulating=True)
         except Exception as e:
-            self._messagebox.showerror("Emulation Error",
-                                       f"Failed to start emulation: {e}")
+            self._messagebox.showerror(t("error.emulation"),
+                                       t("error.emu_failed", error=e))
 
     def _start_dsu_emulation(self, slot_index: int):
         """Start DSU server emulation synchronously."""
@@ -2247,11 +2263,11 @@ class GCControllerEnabler:
             slot.emu_mgr.start('dsu', slot_index=slot_index,
                                rumble_callback=self._make_rumble_callback(slot_index))
             port = getattr(slot.emu_mgr.gamepad, 'port', 26760)
-            self.ui.update_emu_status(slot_index, f"DSU :{port} — Ready")
+            self.ui.update_emu_status(slot_index, t("emu.dsu_ready", port=port))
             self.ui.update_tab_status(slot_index, connected=True, emulating=True)
         except Exception as e:
-            self._messagebox.showerror("Emulation Error",
-                                       f"Failed to start DSU emulation: {e}")
+            self._messagebox.showerror(t("error.emulation"),
+                                       t("error.emu_dsu_failed", error=e))
 
     def _start_dolphin_pipe_emulation(self, slot_index: int):
         """Start Dolphin pipe emulation on a background thread.
@@ -2264,7 +2280,7 @@ class GCControllerEnabler:
         cancel = threading.Event()
         slot._pipe_cancel = cancel
         self.ui.update_emu_status(
-            slot_index, "Waiting for Dolphin...")
+            slot_index, t("emu.waiting_dolphin"))
 
         def _connect():
             try:
@@ -2281,7 +2297,7 @@ class GCControllerEnabler:
         slot = self.slots[slot_index]
         slot._pipe_cancel = None
         self.ui.update_emu_status(
-            slot_index, "Connected & Ready")
+            slot_index, t("emu.connected_ready"))
         self.ui.update_tab_status(slot_index, connected=True, emulating=True)
 
     def _on_pipe_failed(self, slot_index: int, error: Exception):
@@ -2292,8 +2308,8 @@ class GCControllerEnabler:
         self.ui.update_emu_status(slot_index, "")
         self.ui.update_tab_status(slot_index, connected=slot.is_connected, emulating=False)
         if getattr(error, 'errno', None) != errno.ECANCELED:
-            self._messagebox.showerror("Emulation Error",
-                                       f"Failed to start pipe emulation: {error}")
+            self._messagebox.showerror(t("error.emulation"),
+                                       t("error.emu_pipe_failed", error=error))
 
     # ── Calibration wizard ──────────────────────────────────────────
 
@@ -2465,9 +2481,9 @@ class GCControllerEnabler:
         self.update_calibration_from_ui()
         try:
             self.settings_mgr.save()
-            self._messagebox.showinfo("Settings", "Settings saved successfully!")
+            self._messagebox.showinfo(t("settings.title"), t("settings.saved"))
         except Exception as e:
-            self._messagebox.showerror("Error", f"Failed to save settings: {e}")
+            self._messagebox.showerror(t("error.generic"), t("settings.save_error", error=e))
 
     # ── Thread-safe bridges ──────────────────────────────────────────
 
@@ -2540,9 +2556,9 @@ class GCControllerEnabler:
             image = PILImage.new('RGB', (64, 64), color=(83, 84, 134))
 
         menu = pystray.Menu(
-            pystray.MenuItem("Show", self._tray_show, default=True),
+            pystray.MenuItem(t("tray.show"), self._tray_show, default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", self._tray_quit),
+            pystray.MenuItem(t("tray.quit"), self._tray_quit),
         )
 
         self._tray_icon = pystray.Icon(
@@ -3700,15 +3716,15 @@ def main():
 
     setup_logging(debug=args.debug)
 
+    from .i18n import init as i18n_init
+    i18n_init(lang=args.lang)
+
     if not args.scan_debug:
         lock = _acquire_instance_lock()
         if lock is None:
             logger.warning("Another instance is already running — exiting.")
-            print("Another instance of NSO GC Controller is already running.")
+            print(t("app.already_running"))
             sys.exit(1)
-
-    from .i18n import init as i18n_init
-    i18n_init(lang=args.lang)
 
     try:
         if args.scan_debug:
