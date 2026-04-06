@@ -102,13 +102,20 @@ from .input_processor import InputProcessor
 from .controller_slot import ControllerSlot, normalize_ble_address
 from .ble.sw2_protocol import build_rumble_packet
 
-# System tray support (optional)
-try:
-    import pystray
-    from PIL import Image as PILImage
-    _TRAY_AVAILABLE = True
-except ImportError:
+# System tray support (optional).
+# On macOS, pystray runs [NSApplication run] from a background thread which
+# triggers a fatal "NSUpdateCycleInitialize() is called off the main thread"
+# crash on macOS 26+.  The Dock icon (::tk::mac::ReopenApplication) provides
+# window-restore without pystray, so we skip it entirely on Darwin.
+if sys.platform == 'darwin':
     _TRAY_AVAILABLE = False
+else:
+    try:
+        import pystray
+        from PIL import Image as PILImage
+        _TRAY_AVAILABLE = True
+    except ImportError:
+        _TRAY_AVAILABLE = False
 
 # BLE support (optional — only available on Linux with bumble)
 try:
