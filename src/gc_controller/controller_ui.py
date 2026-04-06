@@ -164,7 +164,7 @@ class ControllerUI:
         ).pack(side=tk.LEFT)
 
         for i in range(MAX_SLOTS):
-            tab_name = f"Controller {i + 1}"
+            tab_name = t("ui.controller_tab", n=i + 1)
             self.tabview.add(tab_name)
             self._tab_names.append(tab_name)
 
@@ -406,7 +406,7 @@ class ControllerUI:
     def _refresh_tab_title(self, slot_index: int):
         """Rebuild tab title from connection state."""
         prefix = "\u2713 " if self._slot_connected[slot_index] else ""
-        base = f"Controller {slot_index + 1}"
+        base = t("ui.controller_tab", n=slot_index + 1)
         mode = self._slot_conn_mode[slot_index]
         if self._slot_connected[slot_index] and mode:
             mode_labels = {'usb': ' (USB)', 'ble': ' (BT)', 'dual': ' (USB+BT)'}

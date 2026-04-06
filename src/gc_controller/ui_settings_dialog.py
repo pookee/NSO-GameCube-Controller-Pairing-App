@@ -65,7 +65,7 @@ class SettingsDialog:
         self._on_unlink_device = on_unlink_device
 
         self._dlg = customtkinter.CTkToplevel(parent)
-        self._dlg.title("Settings")
+        self._dlg.title(t("settings.title"))
         self._dlg.resizable(False, False)
         self._dlg.transient(parent)
         self._dlg.configure(fg_color=T.GC_PURPLE_DARK)
@@ -134,13 +134,13 @@ class SettingsDialog:
         ).pack(anchor=tk.W, pady=(12, 4))
 
         customtkinter.CTkRadioButton(
-            left, text="100% at bump",
+            left, text=t("settings.trigger_bump"),
             variable=self._trigger_mode_var, value=True,
             **radio_kwargs,
         ).pack(anchor=tk.W, padx=16, pady=1)
 
         customtkinter.CTkRadioButton(
-            left, text="100% at press",
+            left, text=t("settings.trigger_press"),
             variable=self._trigger_mode_var, value=False,
             **radio_kwargs,
         ).pack(anchor=tk.W, padx=16, pady=1)
@@ -253,7 +253,7 @@ class SettingsDialog:
 
         # ── Start/Stop Emulation ──
         any_connected = self._is_any_connected()
-        emu_text = "Stop Emulation" if self._is_any_emulating() else "Start Emulation"
+        emu_text = t("emu.stop") if self._is_any_emulating() else t("emu.start")
         self._emulate_btn = customtkinter.CTkButton(
             right, text=emu_text,
             command=self._on_emulate_click,
@@ -484,14 +484,13 @@ class SettingsDialog:
 
     def _on_emulate_click(self):
         self._on_emulate_all()
-        # Update button text after toggle
-        emu_text = "Stop Emulation" if self._is_any_emulating() else "Start Emulation"
+        emu_text = t("emu.stop") if self._is_any_emulating() else t("emu.start")
         self._emulate_btn.configure(text=emu_text)
 
     def update_emulate_button(self):
         """Update the emulate button text based on current state."""
         try:
-            emu_text = "Stop Emulation" if self._is_any_emulating() else "Start Emulation"
+            emu_text = t("emu.stop") if self._is_any_emulating() else t("emu.start")
             self._emulate_btn.configure(text=emu_text)
         except Exception:
             pass
