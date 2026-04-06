@@ -69,6 +69,27 @@ if os.path.isdir(_assets_dir):
             datas.append((os.path.join(_assets_dir, f),
                           os.path.join('gc_controller', 'assets', 'controller')))
 
+# Bundle libusb on macOS/Linux so pyusb can send USB init bulk transfers.
+# Without this, the frozen app cannot find the system libusb and USB
+# enumeration fails with "No backend available".
+if sys.platform == "darwin":
+    import ctypes.util
+    _libusb = ctypes.util.find_library('usb-1.0')
+    if _libusb:
+        binaries.append((_libusb, '.'))
+    else:
+        # Fallback: check common Homebrew paths
+        for _p in ('/opt/homebrew/lib/libusb-1.0.dylib',
+                    '/usr/local/lib/libusb-1.0.dylib'):
+            if os.path.exists(_p):
+                binaries.append((_p, '.'))
+                break
+elif sys.platform == "linux":
+    import ctypes.util
+    _libusb = ctypes.util.find_library('usb-1.0')
+    if _libusb:
+        binaries.append((_libusb, '.'))
+
 # Add vgamepad DLLs for Windows as binaries (not datas) so PyInstaller
 # resolves their transitive dependencies (MSVC runtime, etc.)
 # NOTE: We must NOT 'import vgamepad' here because that triggers CDLL()

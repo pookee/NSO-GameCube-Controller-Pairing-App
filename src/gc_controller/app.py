@@ -336,6 +336,7 @@ class GCControllerEnabler:
             sui.pair_btn.configure(state='disabled')
         self.ui.update_tab_status(slot_index, connected=True, emulating=False)
         self.toggle_emulation(slot_index)
+        self._sync_player_leds()
 
         if self._needs_calibration(slot_index):
             self.ui.update_status(slot_index, t("ui.new_controller_cal"))
@@ -1410,10 +1411,45 @@ class GCControllerEnabler:
                 self.ui.update_tab_status(i, connected=True, emulating=False)
                 self.toggle_emulation(i)
 
+    def _sync_player_leds(self):
+        """Re-send player LED commands to all connected USB controllers.
+
+        Uses IOKit registry on macOS to correctly map each slot's HID device
+        to its USB device, ensuring LEDs match GUI slot numbers.
+        """
+        hid_to_bus = ConnectionManager.build_hid_to_usb_bus_map()
+        usb_devices = ConnectionManager.enumerate_usb_devices()
+        bus_to_usb = {u.bus: u for u in usb_devices}
+
+        for slot_idx, slot in enumerate(self.slots):
+            if not slot.is_connected or not slot.device_path:
+                continue
+
+            path_str = slot.device_path
+            if isinstance(path_str, bytes):
+                path_str = path_str.decode('utf-8', errors='replace')
+
+            try:
+                dev_srv_id = int(path_str.split(':')[1])
+            except (IndexError, ValueError):
+                continue
+
+            bus = hid_to_bus.get(dev_srv_id)
+            if bus is not None and bus in bus_to_usb:
+                ConnectionManager.set_player_led_usb(
+                    bus_to_usb[bus], slot_idx + 1)
+
     def _auto_connect_then_hotplug(self):
         """Run startup auto-connect, then start hotplug polling."""
         self.auto_connect_and_emulate()
+        self._sync_player_leds()
         self._start_usb_hotplug()
+        # Re-select first tab (tab rename during auto-connect can deselect it)
+        if self.ui._tab_names:
+            try:
+                self.ui.tabview.set(self.ui._tab_names[0])
+            except Exception:
+                pass
 
     def _on_auto_connect_toggled(self):
         """React to the auto_connect setting being toggled at runtime."""
@@ -1507,6 +1543,7 @@ class GCControllerEnabler:
                 self.ui.update_tab_status(
                     slot_index, connected=True, emulating=False)
                 self.toggle_emulation(slot_index)
+                self._sync_player_leds()
                 logger.info("USB hotplug: slot %d auto-connected", slot_index)
 
     # ── Auto-reconnect ──────────────────────────────────────────────
@@ -1593,6 +1630,8 @@ class GCControllerEnabler:
                     sui.pair_btn.configure(state='disabled')
                 self.ui.update_status(slot_index, t("ui.reconnected"))
                 self.ui.update_tab_status(slot_index, connected=True, emulating=False)
+
+                self._sync_player_leds()
 
                 if slot.reconnect_was_emulating:
                     slot.reconnect_was_emulating = False
@@ -1766,7 +1805,7 @@ class GCControllerEnabler:
                                    cancel_event=cancel)
                 self.root.after(0, lambda: self._on_pipe_connected(slot_index))
             except Exception as e:
-                self.root.after(0, lambda: self._on_pipe_failed(slot_index, e))
+                self.root.after(0, lambda err=e: self._on_pipe_failed(slot_index, err))
 
         threading.Thread(target=_connect, daemon=True).start()
 
