@@ -37,7 +37,12 @@ class ConnectionManager:
         logger.debug("HID enumerate: %d device(s) for VID=%04x PID=%04x",
                       len(devices), VENDOR_ID, PRODUCT_ID)
         for d in devices:
-            logger.debug("  path=%s  product=%s", d.get('path'), d.get('product_string'))
+            logger.debug("  path=%s  product=%s  serial=%s  manufacturer=%s  "
+                         "release=0x%04x  interface=%d  usage_page=0x%04x  usage=0x%04x",
+                         d.get('path'), d.get('product_string'),
+                         d.get('serial_number', ''), d.get('manufacturer_string', ''),
+                         d.get('release_number', 0), d.get('interface_number', -1),
+                         d.get('usage_page', 0), d.get('usage', 0))
         return devices
 
     @staticmethod
