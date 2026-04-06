@@ -85,9 +85,23 @@ if sys.platform == "darwin":
                 binaries.append((_p, '.'))
                 break
 elif sys.platform == "linux":
-    import ctypes.util
-    _libusb = ctypes.util.find_library('usb-1.0')
-    if _libusb:
+    import ctypes.util, ctypes
+    _libusb_name = ctypes.util.find_library('usb-1.0')
+    _libusb = None
+    if _libusb_name:
+        try:
+            _libusb = ctypes.CDLL(_libusb_name)._name
+        except OSError:
+            pass
+    if not _libusb or not os.path.isabs(_libusb):
+        for _p in ('/usr/lib/x86_64-linux-gnu/libusb-1.0.so.0',
+                    '/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0',
+                    '/usr/lib/libusb-1.0.so.0',
+                    '/usr/lib64/libusb-1.0.so.0'):
+            if os.path.exists(_p):
+                _libusb = _p
+                break
+    if _libusb and os.path.isfile(_libusb):
         binaries.append((_libusb, '.'))
 
 # Add vgamepad DLLs for Windows as binaries (not datas) so PyInstaller
