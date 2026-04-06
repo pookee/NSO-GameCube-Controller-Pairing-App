@@ -325,6 +325,7 @@ class SettingsDialog:
         ).pack(anchor=tk.W, pady=(8, 2))
 
         credits = [
+            ("pookee (fork)", "https://github.com/pookee/NSO-GameCube-Controller-Pairing-App"),
             ("GVNPWRS/NSO-GC-Controller-PC", "https://github.com/GVNPWRS/NSO-GC-Controller-PC"),
             ("Nohzockt/Switch2-Controllers", "https://github.com/Nohzockt/Switch2-Controllers"),
             ("isaacs-12/nso-gc-bridge", "https://github.com/isaacs-12/nso-gc-bridge"),
