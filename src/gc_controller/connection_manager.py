@@ -227,6 +227,8 @@ class ConnectionManager:
 
             if self.device:
                 self.device_path = device_path
+                if sys.platform == 'win32':
+                    self._try_hid_init()
                 self._on_status("Connected via HID")
                 self._on_progress(100)
                 return True
@@ -237,6 +239,24 @@ class ConnectionManager:
         except Exception as e:
             self._on_status(f"HID connection failed: {e}")
             return False
+
+    def _try_hid_init(self):
+        """Try switching the controller from standard HID to proprietary GC mode.
+
+        On Windows without libusb, the controller stays in standard HID mode
+        (report ID 0x0A) which Windows also processes as a native gamepad,
+        causing double inputs.  Sending the init + LED commands via HID output
+        reports can switch the controller to the proprietary GC format that
+        only our app understands.
+        """
+        if not self.device:
+            return
+        try:
+            self.device.write(list(DEFAULT_REPORT_DATA))
+            self.device.write(list(SET_LED_DATA))
+            logger.info("HID init: sent init commands via HID write")
+        except Exception as e:
+            logger.debug("HID init via write failed (expected): %s", e)
 
     def connect(self, usb_device=None, device_path: Optional[bytes] = None) -> bool:
         """Full connection sequence: USB init then HID.
