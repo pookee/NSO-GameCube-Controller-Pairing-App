@@ -493,10 +493,11 @@ class GCControllerEnabler:
         all_hid = ConnectionManager.enumerate_devices()
         logger.debug("Slot %d: found %d HID device(s)", slot_index, len(all_hid))
 
-        # Filter out paths already claimed by other slots
+        # Filter out paths already claimed by other slots (USB only)
         claimed_paths = set()
         for i, s in enumerate(self.slots):
-            if i != slot_index and s.is_connected and s.conn_mgr.device_path:
+            if (i != slot_index and s.is_connected
+                    and s.connection_mode == 'usb' and s.conn_mgr.device_path):
                 claimed_paths.add(s.conn_mgr.device_path)
 
         # Auto — pick first unclaimed
@@ -1097,6 +1098,17 @@ class GCControllerEnabler:
                     "new_slot_index": slot_index,
                 })
 
+            # Clear leftover USB state so hotplug doesn't think
+            # this slot still claims a USB path.
+            if slot.conn_mgr.device:
+                try:
+                    slot.conn_mgr.device.close()
+                except Exception:
+                    pass
+                slot.conn_mgr.device = None
+            slot.conn_mgr.device_path = None
+            slot.device_path = None
+
             slot.ble_connected = True
             slot.ble_address = mac
             slot.connection_mode = 'ble'
@@ -1506,6 +1518,17 @@ class GCControllerEnabler:
                 "new_slot_index": slot_index,
             })
 
+        # Clear leftover USB state so hotplug doesn't think
+        # this slot still claims a USB path.
+        if slot.conn_mgr.device:
+            try:
+                slot.conn_mgr.device.close()
+            except Exception:
+                pass
+            slot.conn_mgr.device = None
+        slot.conn_mgr.device_path = None
+        slot.device_path = None
+
         slot.ble_connected = True
         slot.ble_address = mac
         slot.connection_mode = 'ble'
@@ -1644,6 +1667,11 @@ class GCControllerEnabler:
             sui.pair_btn.configure(state='disabled')
         self.ui.update_tab_status(slot_index, connected=False, emulating=False)
 
+        # Rapid USB scan: the controller might be switching from BLE to USB.
+        # Scan every 300ms for ~5s to catch the USB device ASAP and send
+        # init commands before Windows processes raw gamepad inputs.
+        self._start_rapid_usb_scan(slot_index)
+
         self._attempt_ble_reconnect(slot_index)
 
         # Ensure auto-scan is running (for reconnecting other known controllers)
@@ -1724,6 +1752,18 @@ class GCControllerEnabler:
             })
 
         slot = self.slots[slot_index]
+
+        # Clear leftover USB state so hotplug doesn't think
+        # this slot still claims a USB path.
+        if slot.conn_mgr.device:
+            try:
+                slot.conn_mgr.device.close()
+            except Exception:
+                pass
+            slot.conn_mgr.device = None
+        slot.conn_mgr.device_path = None
+        slot.device_path = None
+
         slot.ble_connected = True
         slot.ble_address = mac
         slot.device_identity = make_ble_device_identity(mac)
@@ -1854,6 +1894,7 @@ class GCControllerEnabler:
     def _auto_connect_then_hotplug(self):
         """Run startup auto-connect, then start hotplug polling."""
         self.auto_connect_and_emulate()
+        self._log_all_hid_gamepads("startup")
         self._sync_player_leds()
         self._start_usb_hotplug()
         # Re-select first tab (tab rename during auto-connect can deselect it)
@@ -1917,7 +1958,7 @@ class GCControllerEnabler:
         """Auto-connect newly detected USB controllers to free slots."""
         claimed_paths = set()
         for s in self.slots:
-            if s.is_connected and s.conn_mgr.device_path:
+            if s.is_connected and s.connection_mode == 'usb' and s.conn_mgr.device_path:
                 claimed_paths.add(s.conn_mgr.device_path)
 
         unclaimed = new_paths - claimed_paths
@@ -1964,6 +2005,67 @@ class GCControllerEnabler:
                 self._recent_usb_hotplug[slot_index] = (time.monotonic(), dev_id)
                 logger.info("USB hotplug: slot %d auto-connected (id=%s)",
                             slot_index, dev_id)
+
+    # ── Debug helpers ─────────────────────────────────────────────
+
+    @staticmethod
+    def _log_all_hid_gamepads(context: str = ""):
+        """Enumerate ALL HID gamepads on the system for debugging."""
+        try:
+            all_devs = hid.enumerate(0, 0)
+            gamepads = [d for d in all_devs
+                        if d.get('usage_page') == 0x0001
+                        and d.get('usage') in (0x04, 0x05)]
+            logger.info("HID gamepads on system (%s): %d found",
+                        context, len(gamepads))
+            for d in gamepads:
+                logger.info("  vid=%04X pid=%04X product=%s path=%s",
+                            d.get('vendor_id', 0), d.get('product_id', 0),
+                            d.get('product_string', '?'),
+                            d.get('path', b'?'))
+        except Exception as e:
+            logger.debug("Failed to enumerate HID gamepads: %s", e)
+
+    # ── Rapid USB scan after BLE disconnect ───────────────────────
+
+    def _start_rapid_usb_scan(self, ble_slot: int,
+                               attempts_left: int = 16):
+        """Rapidly enumerate USB after BLE disconnect to minimise the
+        window where Windows processes the controller as a native gamepad.
+
+        Runs every 300 ms for ~5 s.  Stops early if the slot reconnects
+        (via this scan, normal hotplug, or BLE reconnect).
+        """
+        slot = self.slots[ble_slot]
+        if slot.is_connected or attempts_left <= 0:
+            return
+
+        try:
+            current_paths = {
+                d['path'] for d in ConnectionManager.enumerate_devices()
+            }
+        except Exception:
+            current_paths = set()
+
+        new_paths = current_paths - self._last_seen_usb_paths
+        if new_paths:
+            self._last_seen_usb_paths = current_paths
+            self._auto_connect_new_usb(new_paths)
+
+            self._try_cross_transport_migration(ble_slot)
+            if slot.is_connected:
+                logger.info("Rapid USB scan: slot %d reconnected via USB "
+                            "after BLE disconnect", ble_slot)
+                self._log_all_hid_gamepads("after BLE→USB migration")
+                sui = self.ui.slots[ble_slot]
+                self.ui.update_ble_status(ble_slot, "")
+                if sui.pair_btn:
+                    sui.pair_btn.configure(state='disabled')
+                return
+
+        self.root.after(
+            300,
+            lambda: self._start_rapid_usb_scan(ble_slot, attempts_left - 1))
 
     # ── Cross-transport migration ─────────────────────────────────
 
@@ -2098,10 +2200,11 @@ class GCControllerEnabler:
             self.ui.update_tab_status(slot_index, connected=False, emulating=False)
             return
 
-        # Build set of paths claimed by other slots
+        # Build set of paths claimed by other slots (USB only)
         claimed_paths = set()
         for i, s in enumerate(self.slots):
-            if i != slot_index and s.is_connected and s.conn_mgr.device_path:
+            if (i != slot_index and s.is_connected
+                    and s.connection_mode == 'usb' and s.conn_mgr.device_path):
                 claimed_paths.add(s.conn_mgr.device_path)
 
         all_hid = ConnectionManager.enumerate_devices()

@@ -108,6 +108,69 @@ def _translate_report_0x05(data) -> list:
     return buf
 
 
+def _translate_report_0x0A(data) -> list:
+    """Translate Windows report ID 0x0A (Switch 0x30-like) to GC USB format.
+
+    Some NSO GC controllers (possibly after BLE pairing or firmware update)
+    send report ID 0x0A instead of the usual 0x05.  The layout matches the
+    standard Switch 0x30 input report but with a different report ID.
+
+    0x0A raw layout (64 bytes, report ID prepended by Windows HIDAPI):
+        [0]      0x0A report ID
+        [1]      timer
+        [2]      battery / status (0x20 typical)
+        [3]      NSO buttons 0: Y=01 X=02 B=04 A=08 R=10 ZR=20
+        [4]      NSO buttons 1: Minus=01 Plus=02 RStick=04 LStick=08 Home=10 Capture=20
+        [5]      NSO buttons 2: DDown=01 DUp=02 DRight=04 DLeft=08 SR=10 SL=20 L=40 ZL=80
+        [6-11]   sticks (packed 12-bit: LX, LY, RX, RY)
+        [12]     vibrator
+        [13]     left trigger analog
+        [14]     right trigger analog
+
+    Note: button byte 0 encoding differs from 0x05 — R/ZR are at 0x10/0x20
+    here (standard Switch) vs 0x40/0x80 in the 0x05 format (which has
+    SR/SL occupying 0x10/0x20).
+    """
+    buf = [0] * 64
+
+    b0_nso = data[3]
+    b1_nso = data[4]
+    b2_nso = data[5]
+
+    b3 = 0
+    if b0_nso & 0x04: b3 |= 0x01  # B
+    if b0_nso & 0x08: b3 |= 0x02  # A
+    if b0_nso & 0x01: b3 |= 0x04  # Y
+    if b0_nso & 0x02: b3 |= 0x08  # X
+    if b0_nso & 0x10: b3 |= 0x10  # R
+    if b0_nso & 0x20: b3 |= 0x20  # ZR -> Z
+    if b1_nso & 0x02: b3 |= 0x40  # Plus -> Start
+    buf[3] = b3
+
+    b4 = 0
+    if b2_nso & 0x01: b4 |= 0x01  # DDown
+    if b2_nso & 0x04: b4 |= 0x02  # DRight
+    if b2_nso & 0x08: b4 |= 0x04  # DLeft
+    if b2_nso & 0x02: b4 |= 0x08  # DUp
+    if b2_nso & 0x40: b4 |= 0x10  # L
+    if b2_nso & 0x80: b4 |= 0x20  # ZL
+    buf[4] = b4
+
+    b5 = 0
+    if b1_nso & 0x10: b5 |= 0x01  # Home
+    if b1_nso & 0x20: b5 |= 0x02  # Capture
+    buf[5] = b5
+
+    for i in range(6):
+        buf[6 + i] = data[6 + i]
+
+    if len(data) > 14:
+        buf[13] = data[13]
+        buf[14] = data[14]
+
+    return buf
+
+
 class InputProcessor:
     """Reads HID data in a background thread and routes it to subsystems."""
 
@@ -185,6 +248,7 @@ class InputProcessor:
             device = self._device_getter()
             if not device:
                 return
+            first_report = True
             while self.is_reading and not self._stop_event.is_set():
                 if not device:
                     break
@@ -206,9 +270,18 @@ class InputProcessor:
                                 break
                     finally:
                         device.set_nonblocking(0)
+                    if first_report:
+                        first_report = False
+                        logger.info("First USB report: id=0x%02X len=%d "
+                                    "first16=%s",
+                                    latest[0] if latest else 0,
+                                    len(latest),
+                                    ' '.join(f'{b:02X}' for b in latest[:16]))
                     if IS_WINDOWS:
                         if latest[0] == 0x05:
                             latest = _translate_report_0x05(latest)
+                        elif latest[0] == 0x0A:
+                            latest = _translate_report_0x0A(latest)
                         else:
                             latest = latest[1:]
                     self._process_data(latest, t_read=t_read,
