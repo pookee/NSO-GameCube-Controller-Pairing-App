@@ -1098,6 +1098,13 @@ class GCControllerEnabler:
                     "new_slot_index": slot_index,
                 })
 
+            # Stop any USB input thread before touching the device — the
+            # read loop caches the device reference at thread start, so
+            # closing it from another thread races with `device.read()`.
+            # This also lets `input_proc.start(mode='ble')` below take
+            # effect (start() no-ops while is_reading is True).
+            slot.input_proc.stop()
+
             # Clear leftover USB state so hotplug doesn't think
             # this slot still claims a USB path.
             if slot.conn_mgr.device:
@@ -1518,6 +1525,13 @@ class GCControllerEnabler:
                 "new_slot_index": slot_index,
             })
 
+        # Stop any USB input thread before touching the device — the
+        # read loop caches the device reference at thread start, so
+        # closing it from another thread races with `device.read()`.
+        # This also lets `input_proc.start(mode='ble')` below take
+        # effect (start() no-ops while is_reading is True).
+        slot.input_proc.stop()
+
         # Clear leftover USB state so hotplug doesn't think
         # this slot still claims a USB path.
         if slot.conn_mgr.device:
@@ -1752,6 +1766,13 @@ class GCControllerEnabler:
             })
 
         slot = self.slots[slot_index]
+
+        # Stop any USB input thread before touching the device — the
+        # read loop caches the device reference at thread start, so
+        # closing it from another thread races with `device.read()`.
+        # This also lets `input_proc.start(mode='ble')` below take
+        # effect (start() no-ops while is_reading is True).
+        slot.input_proc.stop()
 
         # Clear leftover USB state so hotplug doesn't think
         # this slot still claims a USB path.
