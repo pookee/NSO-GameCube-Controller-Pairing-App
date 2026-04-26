@@ -193,6 +193,13 @@ class InputProcessor:
         self._read_thread: Optional[threading.Thread] = None
         self._ui_update_counter = 0
         self._debug_log_counter = 0
+        # Connection warmup gate: discard initial reports with non-zero buttons
+        # to filter out transient firmware artifacts (especially during
+        # BLE -> USB transitions where the controller briefly sets status bits
+        # in the buttons bytes before stabilizing).
+        self._warmup_passed = False
+        self._warmup_start_t = 0.0
+        self._warmup_timeout_s = 0.5
 
         # Latency profiling state
         self._prof_last_read_t = 0.0
@@ -229,6 +236,8 @@ class InputProcessor:
         self._raw_maxs = None
         self._raw_sums = None
         self._raw_count = 0
+        self._warmup_passed = False
+        self._warmup_start_t = time.perf_counter()
         target = self._read_loop_ble if mode == 'ble' else self._read_loop
         self._read_thread = threading.Thread(target=target, daemon=True)
         self._read_thread.start()
@@ -327,6 +336,21 @@ class InputProcessor:
         """Process raw controller data and route to subsystems."""
         if len(data) < 15:
             return
+
+        # Connection warmup gate: during BLE -> USB transitions (and other
+        # connection events) the NSO GC controller briefly emits non-zero
+        # status bits in the button bytes before settling.  Discard those
+        # initial reports so we never forward phantom button presses to the
+        # virtual gamepad.  The gate opens on the first all-zero buttons
+        # report (controller has settled) or after a short failsafe timeout
+        # so a user holding a button at connect time still gets registered.
+        if not self._warmup_passed:
+            buttons_clean = (data[3] == 0 and data[4] == 0 and data[5] == 0)
+            elapsed = time.perf_counter() - self._warmup_start_t
+            if buttons_clean or elapsed >= self._warmup_timeout_s:
+                self._warmup_passed = True
+            else:
+                return
 
         left_stick_x = data[6] | ((data[7] & 0x0F) << 8)
         left_stick_y = ((data[7] >> 4) | (data[8] << 4))
