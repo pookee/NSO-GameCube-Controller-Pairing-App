@@ -80,22 +80,32 @@ def setup_logging(debug: bool = False):
 def _get_settings_dir() -> str:
     """Return a writable directory for storing settings.
 
-    When running as a frozen PyInstaller bundle the cwd may be read-only
-    (e.g. ``/`` on macOS .app bundles), so we fall back to a platform-
-    appropriate user data directory.  In development (non-frozen) we keep
-    using cwd for backwards compatibility.
+    Always uses the platform user-config directory so development runs
+    and frozen PyInstaller builds share the same settings file (known BLE
+    devices, calibration, slot assignments).  A legacy settings file left
+    in the cwd by the old dev behavior is migrated once if the platform
+    directory has none yet.
     """
-    if getattr(sys, 'frozen', False):
-        if sys.platform == 'darwin':
-            base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
-        elif sys.platform == 'win32':
-            base = os.environ.get('APPDATA', os.path.expanduser('~'))
-        else:
-            base = os.environ.get('XDG_CONFIG_HOME', os.path.join(os.path.expanduser('~'), '.config'))
-        settings_dir = os.path.join(base, 'NSO-GC-Controller')
-        os.makedirs(settings_dir, exist_ok=True)
-        return settings_dir
-    return os.getcwd()
+    if sys.platform == 'darwin':
+        base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+    elif sys.platform == 'win32':
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+    else:
+        base = os.environ.get('XDG_CONFIG_HOME', os.path.join(os.path.expanduser('~'), '.config'))
+    settings_dir = os.path.join(base, 'NSO-GC-Controller')
+    os.makedirs(settings_dir, exist_ok=True)
+
+    if not getattr(sys, 'frozen', False):
+        legacy = os.path.join(os.getcwd(), 'gc_controller_settings.json')
+        target = os.path.join(settings_dir, 'gc_controller_settings.json')
+        if os.path.exists(legacy) and not os.path.exists(target):
+            try:
+                shutil.copy2(legacy, target)
+                logger.info("Migrated legacy settings from %s to %s", legacy, target)
+            except Exception as e:
+                logger.warning("Legacy settings migration failed: %s", e)
+
+    return settings_dir
 
 
 from .calibration import CalibrationManager
