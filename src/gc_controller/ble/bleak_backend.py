@@ -87,6 +87,10 @@ class BleakBackend:
         self._write_chars: dict[str, object] = {}   # identifier -> handshake char (command writes)
         self._cmd_chars: dict[str, object] = {}     # identifier -> command channel char (for vibration)
         self._last_scan: dict[str, BLEDevice] = {}  # address -> BLEDevice from last scan_only()
+        # WinRT connection-parameter request objects.  The parameters stay in
+        # effect only while the request object is alive, so it must be held
+        # for the duration of the connection.
+        self._conn_param_requests: dict[str, object] = {}
 
     @property
     def is_open(self) -> bool:
@@ -441,6 +445,7 @@ class BleakBackend:
             self._clients.pop(address, None)
             self._write_chars.pop(address, None)
             self._cmd_chars.pop(address, None)
+            self._conn_param_requests.pop(address, None)
             on_disconnect()
 
         # Connect — use BLEDevice object if available, else address string
@@ -478,10 +483,14 @@ class BleakBackend:
                     )
                     backend = client._backend
                     if isinstance(backend, BleakClientWinRT):
-                        backend._requester.request_preferred_connection_parameters(
+                        request = backend._requester.request_preferred_connection_parameters(
                             BluetoothLEPreferredConnectionParameters.throughput_optimized
                         )
-                        _log("  Requested ThroughputOptimized connection parameters")
+                        # The parameters revert as soon as the request object
+                        # is garbage collected — keep it alive per-connection.
+                        self._conn_param_requests[address] = request
+                        _log("  Requested ThroughputOptimized connection parameters "
+                             f"(status={getattr(request, 'status', '?')})")
                 else:
                     _log("  Windows 10 detected — cannot optimize BLE interval "
                          "(30-60ms default, upgrade to Win11 for ~7.5-15ms)")
@@ -695,6 +704,7 @@ class BleakBackend:
         """Disconnect a specific controller."""
         self._write_chars.pop(identifier, None)
         self._cmd_chars.pop(identifier, None)
+        self._conn_param_requests.pop(identifier, None)
         client = self._clients.pop(identifier, None)
         if client and client.is_connected:
             try:

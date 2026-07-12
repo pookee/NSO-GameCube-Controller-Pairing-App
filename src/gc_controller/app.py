@@ -18,6 +18,7 @@ import errno
 import json
 import logging
 import os
+import queue
 import shutil
 import signal
 import subprocess
@@ -185,6 +186,11 @@ class GCControllerEnabler:
             self.slot_calibrations[0]['slot_assignments'] = {}
         if 'device_links' not in self.slot_calibrations[0]:
             self.slot_calibrations[0]['device_links'] = {}
+
+        # Autostart registration state — assume the saved setting reflects
+        # reality so we only shell out to the OS when the user toggles it.
+        self._last_autostart_state = bool(
+            self.slot_calibrations[0].get('run_at_startup', False))
 
         # Clear stale BLE slot_assignments from previous sessions.
         # On macOS, CoreBluetooth UUIDs are session-dependent and can change,
@@ -701,7 +707,23 @@ class GCControllerEnabler:
                         break
                     si = self._ble_slot_remap.get(packet[0], packet[0])
                     if 0 <= si < len(self.slots):
-                        self.slots[si].ble_data_queue.put(packet[1:65])
+                        # Never block the shared reader thread on one slot's
+                        # queue — a stalled consumer would freeze input for
+                        # every BLE controller.  On overflow, drop the oldest
+                        # report so the newest input always gets through.
+                        q = self.slots[si].ble_data_queue
+                        data = packet[1:65]
+                        try:
+                            q.put_nowait(data)
+                        except queue.Full:
+                            try:
+                                q.get_nowait()
+                            except queue.Empty:
+                                pass
+                            try:
+                                q.put_nowait(data)
+                            except queue.Full:
+                                pass
                     continue
 
                 rest = stdout.readline()
@@ -2618,13 +2640,19 @@ class GCControllerEnabler:
         self.slot_calibrations[0]['trigger_bump_100_percent'] = self.ui.trigger_mode_var.get()
         self.slot_calibrations[0]['minimize_to_tray'] = self.ui.minimize_to_tray_var.get()
         self.slot_calibrations[0]['stick_deadzone'] = self.ui.stick_deadzone_var.get()
-        self.slot_calibrations[0]['run_at_startup'] = self.ui.run_at_startup_var.get()
+        run_at_startup = self.ui.run_at_startup_var.get()
+        self.slot_calibrations[0]['run_at_startup'] = run_at_startup
 
-        from . import autostart
-        try:
-            autostart.set_enabled(self.ui.run_at_startup_var.get())
-        except Exception as e:
-            logger.warning("Failed to update autostart: %s", e)
+        # Registering autostart spawns a subprocess (schtasks.exe on Windows)
+        # on the Tk main thread — only do it when the value actually changes,
+        # not on every auto-save.
+        if run_at_startup != self._last_autostart_state:
+            from . import autostart
+            try:
+                autostart.set_enabled(run_at_startup)
+                self._last_autostart_state = run_at_startup
+            except Exception as e:
+                logger.warning("Failed to update autostart: %s", e)
 
         for i in range(MAX_SLOTS):
             cal = self.slot_calibrations[i]
@@ -2683,12 +2711,33 @@ class GCControllerEnabler:
         self._ui_poll()
 
     def _ui_poll(self):
-        """Main-thread timer: apply latest input data for each slot."""
-        for slot_index in range(MAX_SLOTS):
-            data = self._latest_ui_data[slot_index]
-            if data is not None:
+        """Main-thread timer: apply latest input data for the visible slot.
+
+        Rendering is skipped while the window is minimized/withdrawn, and
+        only the currently selected tab is drawn — pending data for hidden
+        slots stays queued so switching tabs shows the latest state.
+        """
+        try:
+            window_visible = self.root.state() not in ('iconic', 'withdrawn')
+        except Exception:
+            window_visible = True
+
+        if window_visible:
+            visible_slot = -1
+            try:
+                visible_slot = self.ui._tab_names.index(self.ui.tabview.get())
+            except Exception:
+                pass
+
+            for slot_index in range(MAX_SLOTS):
+                data = self._latest_ui_data[slot_index]
+                if data is None:
+                    continue
+                if visible_slot != -1 and slot_index != visible_slot:
+                    continue
                 self._latest_ui_data[slot_index] = None
                 self._apply_ui_update(slot_index, *data)
+
         self.root.after(33, self._ui_poll)   # ~30 fps
 
     def _apply_ui_update(self, slot_index: int, left_x, left_y, right_x, right_y,
@@ -3314,7 +3363,16 @@ def run_headless(mode_override: str = None):
             try:
                 q.put_nowait(data_bytes)
             except _queue.Full:
-                pass
+                # Drop the oldest report, not the newest — the consumer
+                # drains to the freshest state so stale input is worthless.
+                try:
+                    q.get_nowait()
+                except _queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(data_bytes)
+                except _queue.Full:
+                    pass
 
     def _on_ble_event(event):
         """Runtime event callback from the reader thread."""

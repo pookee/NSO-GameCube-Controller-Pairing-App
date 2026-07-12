@@ -262,22 +262,31 @@ class LinuxGamepad(VirtualGamepad):
         self._dpad_x = 0  # -1=left, 0=center, 1=right
         self._dpad_y = 0  # -1=up, 0=center, 1=down
 
+        # Last written value per ABS axis — skips the uinput write syscall
+        # for unchanged axes (the kernel would filter the event anyway).
+        self._last_abs: dict = {}
+
+    def _write_abs(self, code: int, value: int) -> None:
+        if self._last_abs.get(code) != value:
+            self._last_abs[code] = value
+            self._device.write(self._ecodes.EV_ABS, code, value)
+
     def left_joystick(self, x_value: int, y_value: int) -> None:
         ec = self._ecodes
-        self._device.write(ec.EV_ABS, ec.ABS_X, x_value)
+        self._write_abs(ec.ABS_X, x_value)
         # Invert Y: callers use positive-up, evdev uses positive-down
-        self._device.write(ec.EV_ABS, ec.ABS_Y, -y_value)
+        self._write_abs(ec.ABS_Y, -y_value)
 
     def right_joystick(self, x_value: int, y_value: int) -> None:
         ec = self._ecodes
-        self._device.write(ec.EV_ABS, ec.ABS_RX, x_value)
-        self._device.write(ec.EV_ABS, ec.ABS_RY, -y_value)
+        self._write_abs(ec.ABS_RX, x_value)
+        self._write_abs(ec.ABS_RY, -y_value)
 
     def left_trigger(self, value: int) -> None:
-        self._device.write(self._ecodes.EV_ABS, self._ecodes.ABS_Z, value)
+        self._write_abs(self._ecodes.ABS_Z, value)
 
     def right_trigger(self, value: int) -> None:
-        self._device.write(self._ecodes.EV_ABS, self._ecodes.ABS_RZ, value)
+        self._write_abs(self._ecodes.ABS_RZ, value)
 
     def press_button(self, button: GamepadButton) -> None:
         if button in (GamepadButton.DPAD_UP, GamepadButton.DPAD_DOWN,
@@ -307,27 +316,29 @@ class LinuxGamepad(VirtualGamepad):
         elif button == GamepadButton.DPAD_DOWN:
             self._dpad_y = 1 if pressed else (-1 if self._dpad_y == -1 else 0)
 
-        self._device.write(ec.EV_ABS, ec.ABS_HAT0X, self._dpad_x)
-        self._device.write(ec.EV_ABS, ec.ABS_HAT0Y, self._dpad_y)
+        self._write_abs(ec.ABS_HAT0X, self._dpad_x)
+        self._write_abs(ec.ABS_HAT0Y, self._dpad_y)
 
     def update(self) -> None:
         self._device.syn()
 
     def reset(self) -> None:
         ec = self._ecodes
+        # Force real writes regardless of the dedup cache
+        self._last_abs.clear()
         # Center sticks
-        self._device.write(ec.EV_ABS, ec.ABS_X, 0)
-        self._device.write(ec.EV_ABS, ec.ABS_Y, 0)
-        self._device.write(ec.EV_ABS, ec.ABS_RX, 0)
-        self._device.write(ec.EV_ABS, ec.ABS_RY, 0)
+        self._write_abs(ec.ABS_X, 0)
+        self._write_abs(ec.ABS_Y, 0)
+        self._write_abs(ec.ABS_RX, 0)
+        self._write_abs(ec.ABS_RY, 0)
         # Release triggers
-        self._device.write(ec.EV_ABS, ec.ABS_Z, 0)
-        self._device.write(ec.EV_ABS, ec.ABS_RZ, 0)
+        self._write_abs(ec.ABS_Z, 0)
+        self._write_abs(ec.ABS_RZ, 0)
         # Release D-Pad
         self._dpad_x = 0
         self._dpad_y = 0
-        self._device.write(ec.EV_ABS, ec.ABS_HAT0X, 0)
-        self._device.write(ec.EV_ABS, ec.ABS_HAT0Y, 0)
+        self._write_abs(ec.ABS_HAT0X, 0)
+        self._write_abs(ec.ABS_HAT0Y, 0)
         # Release all buttons
         for code in self._button_map.values():
             self._device.write(ec.EV_KEY, code, 0)
@@ -745,6 +756,10 @@ class DolphinPipeGamepad(VirtualGamepad):
                     self._pipe_path = path
                     self._pipe = os.fdopen(fd, 'w')
                     self._pressed: set[str] = set()
+                    # Last written value per channel — skip formatting and
+                    # writing SET lines whose value hasn't changed.
+                    self._last_sent: dict = {}
+                    self._pipe_dirty = False
                     return
                 except OSError as e:
                     if e.errno != errno.ENXIO:
@@ -759,20 +774,36 @@ class DolphinPipeGamepad(VirtualGamepad):
             time.sleep(0.5)
 
     def left_joystick(self, x_value: int, y_value: int) -> None:
+        if self._last_sent.get('MAIN') == (x_value, y_value):
+            return
+        self._last_sent['MAIN'] = (x_value, y_value)
         x = (x_value / 32767 + 1) / 2
         y = (y_value / 32767 + 1) / 2
         self._pipe.write(f'SET MAIN {x:.4f} {y:.4f}\n')
+        self._pipe_dirty = True
 
     def right_joystick(self, x_value: int, y_value: int) -> None:
+        if self._last_sent.get('C') == (x_value, y_value):
+            return
+        self._last_sent['C'] = (x_value, y_value)
         x = (x_value / 32767 + 1) / 2
         y = (y_value / 32767 + 1) / 2
         self._pipe.write(f'SET C {x:.4f} {y:.4f}\n')
+        self._pipe_dirty = True
 
     def left_trigger(self, value: int) -> None:
+        if self._last_sent.get('L') == value:
+            return
+        self._last_sent['L'] = value
         self._pipe.write(f'SET L {value / 255:.4f}\n')
+        self._pipe_dirty = True
 
     def right_trigger(self, value: int) -> None:
+        if self._last_sent.get('R') == value:
+            return
+        self._last_sent['R'] = value
         self._pipe.write(f'SET R {value / 255:.4f}\n')
+        self._pipe_dirty = True
 
     def press_button(self, button: GamepadButton) -> None:
         name = self._BUTTON_MAP.get(button)
@@ -780,6 +811,7 @@ class DolphinPipeGamepad(VirtualGamepad):
             return
         self._pipe.write(f'PRESS {name}\n')
         self._pressed.add(name)
+        self._pipe_dirty = True
 
     def release_button(self, button: GamepadButton) -> None:
         name = self._BUTTON_MAP.get(button)
@@ -787,11 +819,15 @@ class DolphinPipeGamepad(VirtualGamepad):
             return
         self._pipe.write(f'RELEASE {name}\n')
         self._pressed.discard(name)
+        self._pipe_dirty = True
 
     def update(self) -> None:
-        self._pipe.flush()
+        if self._pipe_dirty:
+            self._pipe_dirty = False
+            self._pipe.flush()
 
     def reset(self) -> None:
+        self._last_sent.clear()
         self._pipe.write('SET MAIN 0.5000 0.5000\n')
         self._pipe.write('SET C 0.5000 0.5000\n')
         self._pipe.write('SET L 0.0000\n')
@@ -799,6 +835,7 @@ class DolphinPipeGamepad(VirtualGamepad):
         for name in list(self._pressed):
             self._pipe.write(f'RELEASE {name}\n')
         self._pressed.clear()
+        self._pipe_dirty = False
         self._pipe.flush()
 
     def close(self) -> None:

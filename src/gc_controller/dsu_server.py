@@ -7,6 +7,7 @@ and other emulators that support the cemuhook DSU protocol.
 Protocol reference: https://v1993.github.io/cemern-protocol/
 """
 
+import select
 import socket
 import struct
 import threading
@@ -226,7 +227,11 @@ class DSUServer:
                 f"Could not bind DSU server to any port in range "
                 f"{self.BASE_PORT}-{self.BASE_PORT + self.MAX_PORT_ATTEMPTS - 1}")
 
-        self._sock.settimeout(0.5)
+        # Non-blocking socket: a socket with a timeout makes EVERY operation
+        # (including hot-path sendto from the HID read thread) run an
+        # internal select() first and block up to the timeout when the
+        # buffer is full.  The listener does its own select() for reads.
+        self._sock.setblocking(False)
         self._running = True
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
@@ -266,14 +271,25 @@ class DSUServer:
     def _listen_loop(self) -> None:
         """Main listener loop — handles incoming DSU client requests."""
         seen_clients: set[tuple] = set()
+        next_prune = time.monotonic() + 1.0
 
         while self._running:
-            try:
-                data, addr = self._sock.recvfrom(1024)
-            except socket.timeout:
+            # Prune on a schedule, not only on idle — otherwise steady
+            # client traffic starves pruning and departed subscribers
+            # keep receiving packets forever.
+            now = time.monotonic()
+            if now >= next_prune:
+                next_prune = now + 1.0
                 self._prune_subscribers()
+
+            try:
+                readable, _, _ = select.select([self._sock], [], [], 0.5)
+                if not readable:
+                    continue
+                data, addr = self._sock.recvfrom(1024)
+            except (BlockingIOError, InterruptedError):
                 continue
-            except OSError:
+            except (OSError, ValueError):
                 if self._running:
                     continue
                 break
@@ -292,7 +308,10 @@ class DSUServer:
 
             if msg_type == MSG_TYPE_REQ_VERSION:
                 resp = _build_version_response(self._server_id)
-                self._sock.sendto(resp, addr)
+                try:
+                    self._sock.sendto(resp, addr)
+                except OSError:
+                    pass
 
             elif msg_type == MSG_TYPE_REQ_PORTS:
                 self._handle_port_request(data, addr)
@@ -311,7 +330,10 @@ class DSUServer:
                 if 0 <= slot < 4:
                     resp = _build_port_info(
                         self._server_id, slot, self._slot_connected[slot])
-                    self._sock.sendto(resp, addr)
+                    try:
+                        self._sock.sendto(resp, addr)
+                    except OSError:
+                        pass
 
     def _handle_data_request(self, data: bytes, addr: tuple) -> None:
         """Register a client subscription for pad data."""

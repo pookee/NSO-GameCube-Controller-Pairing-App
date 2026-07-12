@@ -331,11 +331,17 @@ class CalibrationManager:
 
     # ── Hot-path trigger calibration ─────────────────────────────────
 
+    _TRIGGER_CAL_KEYS = {
+        'left': ('trigger_left_base', 'trigger_left_bump', 'trigger_left_max'),
+        'right': ('trigger_right_base', 'trigger_right_bump', 'trigger_right_max'),
+    }
+
     def calibrate_trigger_fast(self, raw_value: int, side: str) -> int:
         """Fast trigger calibration using cached values (emulation hot path)."""
-        base = self._cached_calibration[f'trigger_{side}_base']
-        bump = self._cached_calibration[f'trigger_{side}_bump']
-        max_val = self._cached_calibration[f'trigger_{side}_max']
+        base_key, bump_key, max_key = self._TRIGGER_CAL_KEYS[side]
+        base = self._cached_calibration[base_key]
+        bump = self._cached_calibration[bump_key]
+        max_val = self._cached_calibration[max_key]
 
         calibrated = raw_value - base
         if calibrated < 0:

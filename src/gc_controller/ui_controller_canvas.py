@@ -145,11 +145,26 @@ class GCControllerVisual:
             body = Image.alpha_composite(body, layer_img)
         self._body_pil = body
 
-        # Stick cap images
+        # Static base: under-body normal layers + body.  In the common case
+        # (no shoulder button pressed) frames start from a copy of this
+        # instead of re-compositing 5 full-size layers.
+        static_base = Image.new('RGBA', self._img_size, (0, 0, 0, 0))
+        for btn_name in self._UNDER_BODY_ORDER:
+            static_base = Image.alpha_composite(
+                static_base, self._pil_under_normal[btn_name])
+        self._static_base = Image.alpha_composite(static_base, self._body_pil)
+
+        # Stick cap images, cropped to their bounding box so the in-place
+        # composite in _composite_frame touches only the cap region and its
+        # dest offset stays non-negative even at full tilt.
         self._pil_sticks = {}
+        self._stick_origins = {}
         for layer_id in ('lefttoggle', 'C'):
-            self._pil_sticks[layer_id] = Image.open(
+            full = Image.open(
                 os.path.join(_ASSETS_DIR, f"{layer_id}.png")).convert('RGBA')
+            bbox = full.getbbox() or (0, 0, full.width, full.height)
+            self._pil_sticks[layer_id] = full.crop(bbox)
+            self._stick_origins[layer_id] = (bbox[0], bbox[1])
 
         # Above-body pressed overlays
         self._pil_above_pressed = {}
@@ -168,34 +183,35 @@ class GCControllerVisual:
             lstick_px: (dx, dy) pixel offset for left stick cap.
             cstick_px: (dx, dy) pixel offset for c-stick cap.
         """
-        img = Image.new('RGBA', self._img_size, (0, 0, 0, 0))
-
-        # 1. Under-body layers (normal or pressed)
-        for btn_name in self._UNDER_BODY_ORDER:
-            if btn_states.get(btn_name):
-                img = Image.alpha_composite(img, self._pil_under_pressed[btn_name])
-            else:
-                img = Image.alpha_composite(img, self._pil_under_normal[btn_name])
-
-        # 2. Body composite
-        img = Image.alpha_composite(img, self._body_pil)
-
-        # 3. Stick caps (shifted if stick is tilted)
-        for stick_id, offset in [('lefttoggle', lstick_px), ('C', cstick_px)]:
-            stick = self._pil_sticks[stick_id]
-            if not self._calibrating:
-                dx, dy = offset
-                if dx == 0 and dy == 0:
-                    img = Image.alpha_composite(img, stick)
+        # 1+2. Under-body layers + body.  The pressed shoulder-button case is
+        # rare — the common case reuses the precomposited static base.
+        if any(btn_states.get(b) for b in self._UNDER_BODY_ORDER):
+            img = Image.new('RGBA', self._img_size, (0, 0, 0, 0))
+            for btn_name in self._UNDER_BODY_ORDER:
+                if btn_states.get(btn_name):
+                    img = Image.alpha_composite(img, self._pil_under_pressed[btn_name])
                 else:
-                    shifted = Image.new('RGBA', self._img_size, (0, 0, 0, 0))
-                    shifted.paste(stick, (dx, dy), stick)
-                    img = Image.alpha_composite(img, shifted)
+                    img = Image.alpha_composite(img, self._pil_under_normal[btn_name])
+            img = Image.alpha_composite(img, self._body_pil)
+        else:
+            img = self._static_base.copy()
 
-        # 4. Above-body pressed overlays
+        # 3. Stick caps (shifted if tilted) — in-place composite of the
+        # cropped cap at its origin, touching only the cap-sized region.
+        if not self._calibrating:
+            max_x = self._img_size[0]
+            max_y = self._img_size[1]
+            for stick_id, offset in (('lefttoggle', lstick_px), ('C', cstick_px)):
+                cap = self._pil_sticks[stick_id]
+                ox, oy = self._stick_origins[stick_id]
+                dest_x = min(max(ox + offset[0], 0), max_x - cap.width)
+                dest_y = min(max(oy + offset[1], 0), max_y - cap.height)
+                img.alpha_composite(cap, dest=(dest_x, dest_y))
+
+        # 4. Above-body pressed overlays (in-place: no per-layer allocation)
         for btn_name in self._ABOVE_BODY_MAP:
             if btn_states.get(btn_name):
-                img = Image.alpha_composite(img, self._pil_above_pressed[btn_name])
+                img.alpha_composite(self._pil_above_pressed[btn_name])
 
         return img
 
@@ -402,7 +418,11 @@ class GCControllerVisual:
                 self._cstick_pos = (x_norm, y_norm)
                 self._dirty = True
 
-        # Update calibration dot position (lightweight canvas oval)
+        # Update calibration dot position (lightweight canvas oval).
+        # The dots are hidden outside calibration mode — skip the Tcl call.
+        if not self._calibrating:
+            return
+
         if side == 'left':
             cx, cy = self.LSTICK_CX, self.LSTICK_CY
             r = self.STICK_GATE_RADIUS

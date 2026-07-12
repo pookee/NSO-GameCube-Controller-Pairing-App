@@ -193,6 +193,10 @@ class InputProcessor:
         self._read_thread: Optional[threading.Thread] = None
         self._ui_update_counter = 0
         self._debug_log_counter = 0
+        # Button-state cache: BUTTONS all live in report bytes 3-5, so a
+        # 3-byte snapshot detects changes without rebuilding the dict.
+        self._btn_snapshot = -1
+        self._button_states: Optional[dict] = None
         # Connection warmup gate: discard initial reports with non-zero buttons
         # to filter out transient firmware artifacts (especially during
         # BLE -> USB transitions where the controller briefly sets status bits
@@ -236,6 +240,8 @@ class InputProcessor:
         self._raw_maxs = None
         self._raw_sums = None
         self._raw_count = 0
+        self._btn_snapshot = -1
+        self._button_states = None
         self._warmup_passed = False
         self._warmup_start_t = time.perf_counter()
         target = self._read_loop_ble if mode == 'ble' else self._read_loop
@@ -374,21 +380,30 @@ class InputProcessor:
             right_x_norm = apply_deadzone(right_x_norm, dz)
             right_y_norm = apply_deadzone(right_y_norm, dz)
 
-        button_states = {}
-        for button in BUTTONS:
-            if len(data) > button.byte_index:
-                pressed = (data[button.byte_index] & button.mask) != 0
-                button_states[button.name] = pressed
+        # Buttons all live in bytes 3-5 (data length >= 15 checked above).
+        # Rebuild the states dict only when those bytes actually change —
+        # the dict is treated as an immutable snapshot by all consumers.
+        btn_snapshot = data[3] | (data[4] << 8) | (data[5] << 16)
+        buttons_changed = (btn_snapshot != self._btn_snapshot
+                           or self._button_states is None)
+        if buttons_changed:
+            states = {}
+            for button in BUTTONS:
+                states[button.name] = (data[button.byte_index] & button.mask) != 0
+            self._button_states = states
+            self._btn_snapshot = btn_snapshot
+        button_states = self._button_states
 
-        left_trigger = data[13] if len(data) > 13 else 0
-        right_trigger = data[14] if len(data) > 14 else 0
+        left_trigger = data[13]
+        right_trigger = data[14]
 
         self._cal_mgr.update_trigger_raw(left_trigger, right_trigger)
 
         t_emu_start = time.perf_counter()
         if self._emu_mgr.is_emulating and self._emu_mgr.gamepad:
             self._emu_mgr.update(left_x_norm, left_y_norm, right_x_norm, right_y_norm,
-                                 left_trigger, right_trigger, button_states)
+                                 left_trigger, right_trigger, button_states,
+                                 buttons_changed=buttons_changed)
         t_done = time.perf_counter()
 
         # Latency profiling (zero overhead when disabled)
