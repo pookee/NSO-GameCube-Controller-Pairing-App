@@ -318,6 +318,12 @@ def _retroarch_cfg_keyvals(nintendo_layout: bool = True) -> Dict[str, str]:
     binds.update(_ra_face_binds(nintendo_layout))
     for port in range(1, MAX_PORTS + 1):
         kv[f"input_player{port}_joypad_index"] = str(port - 1)
+        # Left stick also drives the D-pad. Value "1" (Left Analog) is
+        # CONDITIONAL: RetroArch auto-disables it for any core that actually
+        # reads the analog stick, so Game Boy/NES/SNES get stick->D-pad while
+        # N64/PS1 keep a clean analog stick. The physical D-pad still works
+        # (OR-combined). "3" (Forced) would double-input on analog cores.
+        kv[f"input_player{port}_analog_dpad_mode"] = "1"
         for suffix, val in binds.items():
             kv[f"input_player{port}_{suffix}"] = val
     return kv
