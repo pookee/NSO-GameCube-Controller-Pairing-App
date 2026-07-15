@@ -139,6 +139,8 @@ hiddenimports = [
     'gc_controller.emulation_manager',
     'gc_controller.controller_ui',
     'gc_controller.input_processor',
+    'gc_controller.emulator_config',
+    'gc_controller.ui_emulator_config_dialog',
     'tkinter',
     'tkinter.ttk',
     '_tkinter',
