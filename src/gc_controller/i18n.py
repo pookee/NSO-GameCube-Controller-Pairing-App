@@ -975,28 +975,35 @@ _STRINGS: dict[str, dict[str, str]] = {
               "(A/B per posizione fisica).",
     },
     "emucfg.playstation_fix": {
-        "en": "Also fix PlayStation cores (Cross = confirm)",
-        "fr": "Corriger aussi les cores PlayStation (Croix = valider)",
-        "ja": "PlayStationコアも修正（×＝決定）",
-        "es": "Corregir también cores de PlayStation (Cruz = confirmar)",
-        "de": "Auch PlayStation-Cores korrigieren (Kreuz = Bestätigen)",
-        "pt": "Corrigir também cores PlayStation (Cruz = confirmar)",
-        "it": "Correggi anche i core PlayStation (Croce = conferma)",
+        "en": "Fix PlayStation cores (Cross = confirm, stick moves like D-pad)",
+        "fr": "Corriger les cores PlayStation (Croix = valider, stick = déplacement)",
+        "ja": "PlayStationコアを修正（×＝決定、スティック＝十字）",
+        "es": "Corregir cores de PlayStation (Cruz = confirmar, stick = cruceta)",
+        "de": "PlayStation-Cores korrigieren (Kreuz = Bestätigen, Stick = D-Pad)",
+        "pt": "Corrigir cores PlayStation (Cruz = confirmar, stick = direcional)",
+        "it": "Correggi i core PlayStation (Croce = conferma, stick = croce)",
     },
     "emucfg.playstation_fix_hint": {
-        "en": "Western PS1 games only — swaps A/B for Beetle PSX, PCSX-ReARMed, "
-              "SwanStation. Leave off for Japanese imports.",
-        "fr": "Jeux PS1 occidentaux — inverse A/B pour Beetle PSX, PCSX-ReARMed, "
-              "SwanStation. Laisse décoché pour les imports japonais.",
-        "ja": "西洋版PS1のみ — Beetle PSX等でA/Bを入替。日本版はオフに。",
-        "es": "Solo juegos PS1 occidentales — cambia A/B en Beetle PSX, "
-              "PCSX-ReARMed, SwanStation. Desactiva para imports japoneses.",
-        "de": "Nur westliche PS1-Spiele — tauscht A/B für Beetle PSX, "
-              "PCSX-ReARMed, SwanStation. Für JP-Importe aus lassen.",
-        "pt": "Apenas jogos PS1 ocidentais — troca A/B em Beetle PSX, "
-              "PCSX-ReARMed, SwanStation. Deixe off para imports japoneses.",
-        "it": "Solo giochi PS1 occidentali — scambia A/B per Beetle PSX, "
-              "PCSX-ReARMed, SwanStation. Lascia off per import giapponesi.",
+        "en": "For Beetle PSX, PCSX-ReARMed, SwanStation: swaps A/B (Western "
+              "games) and makes the left stick move the character in D-pad "
+              "games. Analog games (racing, Ape Escape) keep the right stick.",
+        "fr": "Pour Beetle PSX, PCSX-ReARMed, SwanStation : inverse A/B (jeux "
+              "occidentaux) et fait déplacer le perso avec le stick gauche dans "
+              "les jeux à la croix. Les jeux analogiques (courses) gardent le "
+              "stick droit.",
+        "ja": "Beetle PSX等向け：A/B入替（西洋版）＋十字ゲームで左スティックが移動に。",
+        "es": "Para Beetle PSX, PCSX-ReARMed, SwanStation: cambia A/B (juegos "
+              "occidentales) y el stick izquierdo mueve al personaje en juegos "
+              "de cruceta. Los juegos analógicos conservan el stick derecho.",
+        "de": "Für Beetle PSX, PCSX-ReARMed, SwanStation: tauscht A/B (westliche "
+              "Spiele) und der linke Stick bewegt in D-Pad-Spielen. Analoge "
+              "Spiele behalten den rechten Stick.",
+        "pt": "Para Beetle PSX, PCSX-ReARMed, SwanStation: troca A/B (jogos "
+              "ocidentais) e o stick esquerdo move o personagem em jogos de "
+              "direcional. Jogos analógicos mantêm o stick direito.",
+        "it": "Per Beetle PSX, PCSX-ReARMed, SwanStation: scambia A/B (giochi "
+              "occidentali) e lo stick sinistro muove nei giochi a croce. I "
+              "giochi analogici mantengono lo stick destro.",
     },
     "emucfg.locate_launchbox": {
         "en": "Locate LaunchBox folder…",

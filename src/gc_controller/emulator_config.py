@@ -458,6 +458,39 @@ def generate_playstation_remaps(config_dir: str) -> List[GeneratedFile]:
     return files
 
 
+def _ps_stick_keyvals() -> Dict[str, str]:
+    # Forced (mode 3): left stick drives the D-pad even in DualShock mode, so
+    # it moves the character in D-pad PS1 games. Left-stick analog is suppressed
+    # (no dual-input); the right stick stays analog. Per-core ONLY.
+    return {f"input_player{p}_analog_dpad_mode": "3"
+            for p in range(1, MAX_PORTS + 1)}
+
+
+def generate_playstation_stick_overrides(config_dir: str) -> List[GeneratedFile]:
+    """Per-core override .cfg files so the left stick moves the character on PS1.
+
+    Uses a core *override* (config/<Core>/<Core>.cfg), NOT a remap: remaps have
+    a known bug that leaks analog_dpad_mode into the global config. The override
+    applies only while that core is loaded.
+    """
+    files: List[GeneratedFile] = []
+    kv = _ps_stick_keyvals()
+    for core in PS1_CORES:
+        path = os.path.join(config_dir, "config", core, f"{core}.cfg")
+        contents = _cfg_upsert(_read(path), kv)
+        files.append(GeneratedFile(
+            path=path, contents=contents,
+            action="modify" if os.path.isfile(path) else "create",
+            summary=f"PlayStation stick=D-pad ({core})"))
+    return files
+
+
+def generate_playstation_fix(config_dir: str) -> List[GeneratedFile]:
+    """Both PS1 tweaks: A/B swap (Cross=confirm) + left stick drives the D-pad."""
+    return (generate_playstation_remaps(config_dir)
+            + generate_playstation_stick_overrides(config_dir))
+
+
 def generate_dolphin(config_dir: str) -> List[GeneratedFile]:
     files: List[GeneratedFile] = []
     profile = os.path.join(config_dir, "Profiles", "GCPad", "NSO GameCube.ini")
@@ -492,7 +525,7 @@ def detect_emulators(launchbox_path: Optional[str] = None,
         t.files = generate_retroarch(ra_dir, nintendo_layout)
         # PS fix only makes sense on top of the Nintendo layout.
         if nintendo_layout and playstation_fix:
-            t.files += generate_playstation_remaps(ra_dir)
+            t.files += generate_playstation_fix(ra_dir)
         targets.append(t)
 
     if not IS_MAC:  # no XInput/SDL Dolphin profile applies on macOS (pipe only)
