@@ -950,6 +950,54 @@ _STRINGS: dict[str, dict[str, str]] = {
         "pt": "Alguns arquivos falharam: {errors}",
         "it": "Alcuni file non riusciti: {errors}",
     },
+    "emucfg.nintendo_layout": {
+        "en": "Nintendo layout (A/B match the GC buttons)",
+        "fr": "Disposition Nintendo (A/B = boutons de la manette GC)",
+        "ja": "任天堂配置（A/BをGCボタンに合わせる）",
+        "es": "Disposición Nintendo (A/B como los botones GC)",
+        "de": "Nintendo-Layout (A/B wie die GC-Tasten)",
+        "pt": "Layout Nintendo (A/B como os botões do GC)",
+        "it": "Layout Nintendo (A/B come i tasti GC)",
+    },
+    "emucfg.nintendo_layout_hint": {
+        "en": "Recommended for retro consoles. Turn off to keep the Xbox layout "
+              "(A/B by physical position).",
+        "fr": "Recommandé pour les consoles rétro. Décoche pour garder la "
+              "disposition Xbox (A/B par position physique).",
+        "ja": "レトロ機に推奨。オフでXbox配置（物理位置）に。",
+        "es": "Recomendado para consolas retro. Desactiva para el diseño Xbox "
+              "(A/B por posición física).",
+        "de": "Empfohlen für Retro-Konsolen. Aus für Xbox-Layout "
+              "(A/B nach Position).",
+        "pt": "Recomendado para consoles retro. Desative para o layout Xbox "
+              "(A/B por posição física).",
+        "it": "Consigliato per console retro. Disattiva per il layout Xbox "
+              "(A/B per posizione fisica).",
+    },
+    "emucfg.playstation_fix": {
+        "en": "Also fix PlayStation cores (Cross = confirm)",
+        "fr": "Corriger aussi les cores PlayStation (Croix = valider)",
+        "ja": "PlayStationコアも修正（×＝決定）",
+        "es": "Corregir también cores de PlayStation (Cruz = confirmar)",
+        "de": "Auch PlayStation-Cores korrigieren (Kreuz = Bestätigen)",
+        "pt": "Corrigir também cores PlayStation (Cruz = confirmar)",
+        "it": "Correggi anche i core PlayStation (Croce = conferma)",
+    },
+    "emucfg.playstation_fix_hint": {
+        "en": "Western PS1 games only — swaps A/B for Beetle PSX, PCSX-ReARMed, "
+              "SwanStation. Leave off for Japanese imports.",
+        "fr": "Jeux PS1 occidentaux — inverse A/B pour Beetle PSX, PCSX-ReARMed, "
+              "SwanStation. Laisse décoché pour les imports japonais.",
+        "ja": "西洋版PS1のみ — Beetle PSX等でA/Bを入替。日本版はオフに。",
+        "es": "Solo juegos PS1 occidentales — cambia A/B en Beetle PSX, "
+              "PCSX-ReARMed, SwanStation. Desactiva para imports japoneses.",
+        "de": "Nur westliche PS1-Spiele — tauscht A/B für Beetle PSX, "
+              "PCSX-ReARMed, SwanStation. Für JP-Importe aus lassen.",
+        "pt": "Apenas jogos PS1 ocidentais — troca A/B em Beetle PSX, "
+              "PCSX-ReARMed, SwanStation. Deixe off para imports japoneses.",
+        "it": "Solo giochi PS1 occidentali — scambia A/B per Beetle PSX, "
+              "PCSX-ReARMed, SwanStation. Lascia off per import giapponesi.",
+    },
     "emucfg.locate_launchbox": {
         "en": "Locate LaunchBox folder…",
         "fr": "Localiser le dossier LaunchBox…",

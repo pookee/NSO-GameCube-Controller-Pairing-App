@@ -33,6 +33,8 @@ class EmulatorConfigDialog:
         self._targets = []
         self._vars = {}          # target.id -> BooleanVar
         self._busy = False
+        self._nintendo_var = tk.BooleanVar(value=True)
+        self._ps_var = tk.BooleanVar(value=False)
 
         self._dlg = customtkinter.CTkToplevel(parent)
         self._dlg.title(t("emucfg.title"))
@@ -53,6 +55,35 @@ class EmulatorConfigDialog:
             text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 12),
             wraplength=440, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(4, 12))
+
+        # ── Nintendo layout toggle ──
+        customtkinter.CTkCheckBox(
+            outer, text=t("emucfg.nintendo_layout"),
+            variable=self._nintendo_var, command=self._on_layout_toggle,
+            fg_color=T.RADIO_FG, hover_color=T.RADIO_HOVER,
+            checkmark_color=T.BTN_TEXT, border_color=T.RADIO_BORDER,
+            text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 13),
+        ).pack(anchor=tk.W, pady=(0, 2))
+        customtkinter.CTkLabel(
+            outer, text=t("emucfg.nintendo_layout_hint"),
+            text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 11),
+            wraplength=440, justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=28, pady=(0, 6))
+
+        # ── PlayStation A/B fix (opt-in; only meaningful with Nintendo layout) ──
+        self._ps_check = customtkinter.CTkCheckBox(
+            outer, text=t("emucfg.playstation_fix"),
+            variable=self._ps_var, command=self._on_layout_toggle,
+            fg_color=T.RADIO_FG, hover_color=T.RADIO_HOVER,
+            checkmark_color=T.BTN_TEXT, border_color=T.RADIO_BORDER,
+            text_color=T.TEXT_PRIMARY, font=(T.FONT_FAMILY, 13),
+        )
+        self._ps_check.pack(anchor=tk.W, padx=28, pady=(0, 2))
+        customtkinter.CTkLabel(
+            outer, text=t("emucfg.playstation_fix_hint"),
+            text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 11),
+            wraplength=420, justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=52, pady=(0, 10))
 
         self._list_frame = customtkinter.CTkFrame(outer, fg_color="transparent")
         self._list_frame.pack(fill=tk.BOTH, expand=True)
@@ -108,8 +139,18 @@ class EmulatorConfigDialog:
             w.destroy()
         self._vars.clear()
 
+        # PS fix only applies on top of the Nintendo layout.
+        nintendo = self._nintendo_var.get()
         try:
-            self._targets = ec.detect_emulators(self._launchbox_path or None)
+            self._ps_check.configure(state="normal" if nintendo else "disabled")
+        except Exception:
+            pass
+
+        try:
+            self._targets = ec.detect_emulators(
+                self._launchbox_path or None,
+                nintendo_layout=nintendo,
+                playstation_fix=nintendo and self._ps_var.get())
         except Exception as e:
             self._targets = []
             self._status.configure(text=f"{e}")
@@ -161,6 +202,10 @@ class EmulatorConfigDialog:
             self._warning.configure(text=t("emucfg.running_warning", emus=names))
         else:
             self._warning.configure(text="")
+
+    def _on_layout_toggle(self):
+        # Regenerate configs with the chosen A/B layout.
+        self._detect_and_build()
 
     def _locate_launchbox(self):
         from tkinter import filedialog

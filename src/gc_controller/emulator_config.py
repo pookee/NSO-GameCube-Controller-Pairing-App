@@ -47,15 +47,13 @@ XBOX360_PRODUCT_ID = "654"   # 0x028E
 # RetroArch, xinput driver (Windows). Keys are the RetroPad bind suffixes; the
 # writer prefixes them with input_playerN_ (retroarch.cfg) or leaves them bare
 # (autoconfig .cfg). Numbers/hats/axes are the RetroArch xinput convention.
+# NOTE: face buttons (a/b/x/y) are NOT here — they depend on the layout choice
+# below (positional vs Nintendo). Everything else is layout-independent.
 RA_XINPUT_BINDS: Dict[str, str] = {
     "up_btn": "h0up",
     "down_btn": "h0down",
     "left_btn": "h0left",
     "right_btn": "h0right",
-    "a_btn": "1",          # RetroPad A (east)  = Xbox B
-    "b_btn": "0",          # RetroPad B (south) = Xbox A
-    "x_btn": "3",          # RetroPad X (north) = Xbox Y
-    "y_btn": "2",          # RetroPad Y (west)  = Xbox X
     "select_btn": "7",     # Back  (GC Capture)
     "start_btn": "6",      # Start (GC Start)
     "l_btn": "4",          # LB    (GC ZL)
@@ -74,10 +72,22 @@ RA_XINPUT_BINDS: Dict[str, str] = {
     "r_y_minus_axis": "+3",
 }
 
-# GC-flavoured on-screen labels (behaviour-neutral) for the autoconfig file.
+# Face-button layout. XInput button indices: 0=A(south) 1=B(east) 2=X(west)
+# 3=Y(north). The app emits GC-A->XInput 0, GC-B->1, GC-X->2, GC-Y->3.
+#
+# Positional: matches a physical Xbox pad by POSITION (RetroPad A=east=btn 1).
+#   -> the GC controller's *labels* end up swapped vs the game (GC-A acts as B)
+#      because Xbox calls the south button "A" but Nintendo calls it "B".
+# Nintendo (default): matches the GC controller's LABELS to the game. GC-A =
+#   the game's A on every Nintendo console (NES/SNES/GB/GBA/N64…). This is how
+#   native Nintendo pads (Switch Pro, 8BitDo) are auto-configured.
+RA_FACE_POSITIONAL: Dict[str, str] = {
+    "a_btn": "1", "b_btn": "0", "x_btn": "3", "y_btn": "2"}
+RA_FACE_NINTENDO: Dict[str, str] = {
+    "a_btn": "0", "b_btn": "1", "x_btn": "2", "y_btn": "3"}
+
+# Layout-independent GC labels for the non-face controls.
 RA_XINPUT_LABELS: Dict[str, str] = {
-    "b_btn_label": "GC A", "a_btn_label": "GC B",
-    "y_btn_label": "GC X", "x_btn_label": "GC Y",
     "l_btn_label": "GC ZL", "r_btn_label": "GC Z",
     "l2_axis_label": "GC L", "r2_axis_label": "GC R",
     "start_btn_label": "GC Start", "select_btn_label": "GC Capture",
@@ -85,6 +95,21 @@ RA_XINPUT_LABELS: Dict[str, str] = {
     "up_btn_label": "GC D-Pad Up", "down_btn_label": "GC D-Pad Down",
     "left_btn_label": "GC D-Pad Left", "right_btn_label": "GC D-Pad Right",
 }
+
+
+def _ra_face_binds(nintendo_layout: bool) -> Dict[str, str]:
+    return dict(RA_FACE_NINTENDO if nintendo_layout else RA_FACE_POSITIONAL)
+
+
+def _ra_face_labels(nintendo_layout: bool) -> Dict[str, str]:
+    """On-screen labels naming the physical GC button behind each RetroPad key."""
+    if nintendo_layout:
+        # RetroPad A/B/X/Y == GC A/B/X/Y (labels match).
+        return {"a_btn_label": "GC A", "b_btn_label": "GC B",
+                "x_btn_label": "GC X", "y_btn_label": "GC Y"}
+    # Positional: RetroPad A(east) is physically GC-B, etc.
+    return {"a_btn_label": "GC B", "b_btn_label": "GC A",
+            "x_btn_label": "GC Y", "y_btn_label": "GC X"}
 
 # Global RetroArch keys we set so the pad is actually usable.
 RA_GLOBAL_KEYS: Dict[str, str] = {
@@ -283,21 +308,27 @@ def _cfg_upsert(text: str, keyvals: Dict[str, str]) -> str:
     return newline.join(lines)
 
 
-def _retroarch_cfg_keyvals() -> Dict[str, str]:
+def _retroarch_cfg_keyvals(nintendo_layout: bool = True) -> Dict[str, str]:
     """All retroarch.cfg keys we set: driver, globals, and P1-4 binds."""
     kv: Dict[str, str] = {}
     if IS_WIN:
         kv["input_joypad_driver"] = "xinput"
     kv.update(RA_GLOBAL_KEYS)
+    binds = dict(RA_XINPUT_BINDS)
+    binds.update(_ra_face_binds(nintendo_layout))
     for port in range(1, MAX_PORTS + 1):
         kv[f"input_player{port}_joypad_index"] = str(port - 1)
-        for suffix, val in RA_XINPUT_BINDS.items():
+        for suffix, val in binds.items():
             kv[f"input_player{port}_{suffix}"] = val
     return kv
 
 
-def _retroarch_autoconfig_text() -> str:
+def _retroarch_autoconfig_text(nintendo_layout: bool = True) -> str:
     """A GC-labelled autoconfig profile for the xinput driver."""
+    binds = dict(RA_XINPUT_BINDS)
+    binds.update(_ra_face_binds(nintendo_layout))
+    labels = dict(RA_XINPUT_LABELS)
+    labels.update(_ra_face_labels(nintendo_layout))
     lines = [
         'input_driver = "xinput"',
         'input_device = "XInput Controller"',
@@ -306,10 +337,10 @@ def _retroarch_autoconfig_text() -> str:
         f'input_product_id = "{XBOX360_PRODUCT_ID}"',
         "",
     ]
-    for suffix, val in RA_XINPUT_BINDS.items():
+    for suffix, val in binds.items():
         lines.append(f'input_{suffix} = "{val}"')
     lines.append("")
-    for suffix, label in RA_XINPUT_LABELS.items():
+    for suffix, label in labels.items():
         lines.append(f'input_{suffix} = "{label}"')
     return "\n".join(lines) + "\n"
 
@@ -372,21 +403,52 @@ def _read(path: str) -> str:
         return ""
 
 
-def generate_retroarch(config_dir: str) -> List[GeneratedFile]:
+def generate_retroarch(config_dir: str,
+                       nintendo_layout: bool = True) -> List[GeneratedFile]:
     files: List[GeneratedFile] = []
+    layout_note = "Nintendo A/B" if nintendo_layout else "Xbox A/B"
     cfg = os.path.join(config_dir, "retroarch.cfg")
     if os.path.isfile(cfg):
-        patched = _cfg_upsert(_read(cfg), _retroarch_cfg_keyvals())
+        patched = _cfg_upsert(_read(cfg), _retroarch_cfg_keyvals(nintendo_layout))
         files.append(GeneratedFile(
             path=cfg, contents=patched, action="modify",
-            summary="Bind players 1-4 to the GC pad (xinput) + Home=menu"))
+            summary=f"Bind players 1-4 ({layout_note}) + Home=menu"))
     # Autoconfig profile (GC labels; also helps auto-binding on fresh installs).
     ac = os.path.join(config_dir, "autoconfig", "xinput",
                       "NSO GameCube Controller.cfg")
     files.append(GeneratedFile(
-        path=ac, contents=_retroarch_autoconfig_text(),
+        path=ac, contents=_retroarch_autoconfig_text(nintendo_layout),
         action="modify" if os.path.isfile(ac) else "create",
         summary="Auto-config profile with GameCube button labels"))
+    return files
+
+
+# PlayStation cores where a Nintendo-layout pad puts confirm (Cross) on the
+# wrong button for Western games. A per-core remap swaps A/B back at the
+# RetroPad level (RetroPad IDs: B=0, A=8) without touching global binds or the
+# menu. Opt-in only (region-dependent: JP imports use Circle=confirm).
+PS1_CORES = ["Beetle PSX", "Beetle PSX HW", "PCSX-ReARMed", "SwanStation"]
+
+
+def _ps_remap_keyvals() -> Dict[str, str]:
+    kv: Dict[str, str] = {}
+    for port in range(1, MAX_PORTS + 1):
+        kv[f"input_player{port}_btn_a"] = "0"   # RetroPad A acts as B (Cross)
+        kv[f"input_player{port}_btn_b"] = "8"   # RetroPad B acts as A (Circle)
+    return kv
+
+
+def generate_playstation_remaps(config_dir: str) -> List[GeneratedFile]:
+    """Per-core .rmp files that make GC-A = Cross (confirm) on PS1 cores."""
+    files: List[GeneratedFile] = []
+    kv = _ps_remap_keyvals()
+    for core in PS1_CORES:
+        path = os.path.join(config_dir, "config", "remaps", core, f"{core}.rmp")
+        contents = _cfg_upsert(_read(path), kv)
+        files.append(GeneratedFile(
+            path=path, contents=contents,
+            action="modify" if os.path.isfile(path) else "create",
+            summary=f"PlayStation A/B fix ({core})"))
     return files
 
 
@@ -409,7 +471,9 @@ def generate_dolphin(config_dir: str) -> List[GeneratedFile]:
 # Detection + apply
 # ─────────────────────────────────────────────────────────────────────────
 
-def detect_emulators(launchbox_path: Optional[str] = None) -> List[EmulatorTarget]:
+def detect_emulators(launchbox_path: Optional[str] = None,
+                     nintendo_layout: bool = True,
+                     playstation_fix: bool = False) -> List[EmulatorTarget]:
     """Find installed emulators we can configure, on this machine/OS."""
     lb = find_launchbox(launchbox_path)
     targets: List[EmulatorTarget] = []
@@ -419,7 +483,10 @@ def detect_emulators(launchbox_path: Optional[str] = None) -> List[EmulatorTarge
         src = "launchbox" if (lb and lb in ra_dir) else "system"
         t = EmulatorTarget(id="retroarch", name="RetroArch", config_dir=ra_dir,
                            detected_from=src)
-        t.files = generate_retroarch(ra_dir)
+        t.files = generate_retroarch(ra_dir, nintendo_layout)
+        # PS fix only makes sense on top of the Nintendo layout.
+        if nintendo_layout and playstation_fix:
+            t.files += generate_playstation_remaps(ra_dir)
         targets.append(t)
 
     if not IS_MAC:  # no XInput/SDL Dolphin profile applies on macOS (pipe only)
