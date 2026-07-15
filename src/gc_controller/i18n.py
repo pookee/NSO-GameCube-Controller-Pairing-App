@@ -887,6 +887,15 @@ _STRINGS: dict[str, dict[str, str]] = {
               "pad GameCube in questi emulatori. I file esistenti vengono salvati "
               "prima. Chiudi l'emulatore prima di applicare.",
     },
+    "emucfg.detecting": {
+        "en": "Detecting emulators…",
+        "fr": "Détection des émulateurs…",
+        "ja": "エミュレーターを検出中…",
+        "es": "Detectando emuladores…",
+        "de": "Emulatoren werden erkannt…",
+        "pt": "Detectando emuladores…",
+        "it": "Rilevamento emulatori…",
+    },
     "emucfg.no_emulators": {
         "en": "No supported emulators found on this PC.",
         "fr": "Aucun émulateur pris en charge trouvé sur ce PC.",

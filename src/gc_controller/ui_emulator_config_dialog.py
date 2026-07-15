@@ -33,6 +33,8 @@ class EmulatorConfigDialog:
         self._targets = []
         self._vars = {}          # target.id -> BooleanVar
         self._busy = False
+        self._closed = False
+        self._detect_seq = 0     # guards against stale background detections
         self._nintendo_var = tk.BooleanVar(value=True)
         self._ps_var = tk.BooleanVar(value=False)
 
@@ -121,49 +123,97 @@ class EmulatorConfigDialog:
 
         customtkinter.CTkButton(
             btn_row, text=t("btn.cancel"),
-            command=self._dlg.destroy,
+            command=self._on_close,
             fg_color="#463F6F", hover_color="#5A5190", text_color=T.TEXT_PRIMARY,
             corner_radius=12, height=36, width=120, font=(T.FONT_FAMILY, 14),
         ).pack(side=tk.RIGHT)
 
-        self._detect_and_build()
+        self._start_detection()
 
-        self._dlg.protocol("WM_DELETE_WINDOW", self._dlg.destroy)
+        self._dlg.protocol("WM_DELETE_WINDOW", self._on_close)
         self._center_on_parent()
         self._dlg.after(10, self._dlg.grab_set)
 
+    def _on_close(self):
+        self._closed = True
+        self._dlg.destroy()
+
     # ── Detection / list building ──────────────────────────────────────
 
-    def _detect_and_build(self):
-        for w in self._list_frame.winfo_children():
-            w.destroy()
-        self._vars.clear()
+    def _start_detection(self):
+        """Detect + generate off the UI thread so the window opens instantly.
 
-        # PS fix only applies on top of the Nintendo layout.
+        Detection reads/processes a large retroarch.cfg and runs `tasklist`
+        (a subprocess); doing that on the Tk main thread froze the window on
+        open. Here we show a placeholder immediately and compute in the
+        background, then repaint via after().
+        """
+        # PS fix only applies on top of the Nintendo layout (instant, UI thread).
         nintendo = self._nintendo_var.get()
         try:
             self._ps_check.configure(state="normal" if nintendo else "disabled")
         except Exception:
             pass
 
-        try:
-            self._targets = ec.detect_emulators(
-                self._launchbox_path or None,
-                nintendo_layout=nintendo,
-                playstation_fix=nintendo and self._ps_var.get())
-        except Exception as e:
-            self._targets = []
-            self._status.configure(text=f"{e}")
+        for w in self._list_frame.winfo_children():
+            w.destroy()
+        self._vars.clear()
+        customtkinter.CTkLabel(
+            self._list_frame, text=t("emucfg.detecting"),
+            text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 13),
+        ).pack(anchor=tk.W, pady=4)
+        self._apply_btn.configure(state="disabled")
 
-        if not self._targets:
+        self._detect_seq += 1
+        seq = self._detect_seq
+        lb = self._launchbox_path or None
+        ps = nintendo and self._ps_var.get()
+
+        def worker():
+            err = None
+            try:
+                targets = ec.detect_emulators(lb, nintendo_layout=nintendo,
+                                              playstation_fix=ps)
+                running = ec.running_emulators(
+                    [t_.id for t_ in targets if t_.actionable])
+            except Exception as e:
+                targets, running, err = [], [], str(e)
+            try:
+                self._dlg.after(
+                    0, lambda: self._populate(seq, targets, running, err))
+            except Exception:
+                pass  # dialog already gone
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _populate(self, seq, targets, running, err):
+        # Ignore results from a superseded/late detection or a closed dialog.
+        if self._closed or seq != self._detect_seq:
+            return
+        try:
+            if not self._dlg.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for w in self._list_frame.winfo_children():
+            w.destroy()
+        self._vars.clear()
+        self._targets = targets
+
+        if err:
+            self._status.configure(text=err, text_color="#E06C6C")
+
+        if not targets:
             customtkinter.CTkLabel(
                 self._list_frame, text=t("emucfg.no_emulators"),
                 text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 13),
             ).pack(anchor=tk.W, pady=4)
             self._apply_btn.configure(state="disabled")
+            self._warning.configure(text="")
             return
 
-        for tgt in self._targets:
+        for tgt in targets:
             row = customtkinter.CTkFrame(self._list_frame, fg_color="transparent")
             row.pack(anchor=tk.W, fill=tk.X, pady=3)
 
@@ -191,21 +241,16 @@ class EmulatorConfigDialog:
                     text_color=T.TEXT_SECONDARY, font=(T.FONT_FAMILY, 13),
                 ).pack(anchor=tk.W)
 
-        self._refresh_running_warning()
-
-    def _refresh_running_warning(self):
-        actionable_ids = [t_.id for t_ in self._targets if t_.actionable]
-        running = ec.running_emulators(actionable_ids)
+        self._apply_btn.configure(state="normal")
         if running:
-            names = ", ".join(
-                t_.name for t_ in self._targets if t_.id in running)
+            names = ", ".join(t_.name for t_ in targets if t_.id in running)
             self._warning.configure(text=t("emucfg.running_warning", emus=names))
         else:
             self._warning.configure(text="")
 
     def _on_layout_toggle(self):
-        # Regenerate configs with the chosen A/B layout.
-        self._detect_and_build()
+        # Regenerate configs with the chosen A/B / PlayStation options.
+        self._start_detection()
 
     def _locate_launchbox(self):
         from tkinter import filedialog
@@ -217,7 +262,7 @@ class EmulatorConfigDialog:
         self._launchbox_path = path
         if self._on_launchbox_path_changed:
             self._on_launchbox_path_changed(path)
-        self._detect_and_build()
+        self._start_detection()
 
     # ── Apply ──────────────────────────────────────────────────────────
 
@@ -230,26 +275,43 @@ class EmulatorConfigDialog:
         if not selected:
             return
 
-        # Block if any selected emulator is currently running (would clobber).
-        running = ec.running_emulators([t_.id for t_ in selected])
-        if running:
-            names = ", ".join(t_.name for t_ in selected if t_.id in running)
-            self._warning.configure(text=t("emucfg.running_warning", emus=names))
-            return
-
         self._busy = True
         self._apply_btn.configure(state="disabled", text=t("emucfg.applying"))
         self._status.configure(text="")
 
+        ids = [t_.id for t_ in selected]
+        names_by_id = {t_.id: t_.name for t_ in selected}
         files = [gf for t_ in selected for gf in t_.files]
 
         def worker():
+            # Both the running-check (tasklist) and the writes run off-thread.
+            running = ec.running_emulators(ids)
+            if running:
+                try:
+                    self._dlg.after(
+                        0, lambda: self._on_apply_blocked(running, names_by_id))
+                except Exception:
+                    pass
+                return
             result = ec.apply_files(files, backup=True)
-            self._dlg.after(0, lambda: self._on_apply_done(result))
+            try:
+                self._dlg.after(0, lambda: self._on_apply_done(result))
+            except Exception:
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_apply_blocked(self, running, names_by_id):
+        if self._closed:
+            return
+        self._busy = False
+        self._apply_btn.configure(state="normal", text=t("emucfg.apply"))
+        names = ", ".join(names_by_id[i] for i in running if i in names_by_id)
+        self._warning.configure(text=t("emucfg.running_warning", emus=names))
+
     def _on_apply_done(self, result):
+        if self._closed:
+            return
         self._busy = False
         self._apply_btn.configure(state="normal", text=t("emucfg.apply"))
         if result.errors:
@@ -262,7 +324,7 @@ class EmulatorConfigDialog:
                 msg += "\n" + t("emucfg.backup_note")
             self._status.configure(text=msg, text_color="#7ED08B")
         # Re-detect so subsequent applies show correct create/modify state.
-        self._detect_and_build()
+        self._start_detection()
 
     # ── Window placement ───────────────────────────────────────────────
 
