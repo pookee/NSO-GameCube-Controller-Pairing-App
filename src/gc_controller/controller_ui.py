@@ -303,6 +303,7 @@ class ControllerUI:
             run_at_startup_var=self.run_at_startup_var,
             on_emulate_all=self._on_emulate_all if self._on_emulate_all else lambda: None,
             on_test_rumble_all=self._on_test_rumble_all if self._on_test_rumble_all else lambda: None,
+            on_configure_emulators=self.open_emulator_config,
             is_any_emulating=lambda: any(self._slot_emulating),
             is_any_connected=lambda: any(self._slot_connected),
             on_save=self._on_save,
@@ -310,6 +311,21 @@ class ControllerUI:
             on_forget_ble_device=self._on_forget_ble_device,
             get_device_links=self._get_device_links,
             on_unlink_device=self._on_unlink_device,
+        )
+
+    def open_emulator_config(self):
+        """Open the emulator-config helper dialog."""
+        from .ui_emulator_config_dialog import EmulatorConfigDialog
+
+        def _persist(path: str):
+            self._slot_calibrations[0]['launchbox_path'] = path
+            if self._on_auto_save:
+                self._on_auto_save()
+
+        EmulatorConfigDialog(
+            self._root,
+            launchbox_path=self._slot_calibrations[0].get('launchbox_path', ''),
+            on_launchbox_path_changed=_persist,
         )
 
     # ── UI update methods ────────────────────────────────────────────

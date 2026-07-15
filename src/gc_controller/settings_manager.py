@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _GLOBAL_KEYS = {
     'auto_connect', 'auto_scan_ble', 'emulation_mode', 'trigger_bump_100_percent',
     'minimize_to_tray', 'stick_deadzone', 'known_ble_devices', 'run_at_startup',
-    'slot_assignments', 'device_links',
+    'slot_assignments', 'device_links', 'launchbox_path',
 }
 
 

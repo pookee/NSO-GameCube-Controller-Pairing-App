@@ -39,6 +39,7 @@ class SettingsDialog:
                  run_at_startup_var: tk.BooleanVar = None,
                  on_emulate_all: Callable = lambda: None,
                  on_test_rumble_all: Callable = lambda: None,
+                 on_configure_emulators: Callable = lambda: None,
                  is_any_emulating: Callable[[], bool] = lambda: False,
                  is_any_connected: Callable[[], bool] = lambda: False,
                  on_save: Optional[Callable] = None,
@@ -56,6 +57,7 @@ class SettingsDialog:
         self._run_at_startup_var = run_at_startup_var
         self._on_emulate_all = on_emulate_all
         self._on_test_rumble_all = on_test_rumble_all
+        self._on_configure_emulators = on_configure_emulators
         self._is_any_emulating = is_any_emulating
         self._is_any_connected = is_any_connected
         self._on_save = on_save
@@ -270,6 +272,13 @@ class SettingsDialog:
             **btn_kwargs,
         )
         self._rumble_btn.pack(anchor=tk.W, pady=4)
+
+        # ── Configure Emulators ──
+        customtkinter.CTkButton(
+            right, text=t("settings.configure_emulators"),
+            command=self._on_configure_emulators_click,
+            **btn_kwargs,
+        ).pack(anchor=tk.W, pady=4)
 
         # ── Paired Controllers ──
         if self._get_known_ble_devices is not None:
@@ -487,6 +496,9 @@ class SettingsDialog:
         self._on_emulate_all()
         emu_text = t("emu.stop") if self._is_any_emulating() else t("emu.start")
         self._emulate_btn.configure(text=emu_text)
+
+    def _on_configure_emulators_click(self):
+        self._on_configure_emulators()
 
     def update_emulate_button(self):
         """Update the emulate button text based on current state."""

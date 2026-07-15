@@ -846,6 +846,128 @@ _STRINGS: dict[str, dict[str, str]] = {
         "pt": "Testar vibração",
         "it": "Testa vibrazione",
     },
+    "settings.configure_emulators": {
+        "en": "Configure Emulators…",
+        "fr": "Configurer les émulateurs…",
+        "ja": "エミュレーターを設定…",
+        "es": "Configurar emuladores…",
+        "de": "Emulatoren konfigurieren…",
+        "pt": "Configurar emuladores…",
+        "it": "Configura emulatori…",
+    },
+
+    # ── Emulator config dialog ──
+    "emucfg.title": {
+        "en": "Configure Emulators",
+        "fr": "Configurer les émulateurs",
+        "ja": "エミュレーターの設定",
+        "es": "Configurar emuladores",
+        "de": "Emulatoren konfigurieren",
+        "pt": "Configurar emuladores",
+        "it": "Configura emulatori",
+    },
+    "emucfg.intro": {
+        "en": "Installs the right controller settings so your GameCube pads "
+              "work in these emulators. Existing files are backed up first. "
+              "Close the emulator before applying.",
+        "fr": "Installe les bons réglages de manette pour que tes pads "
+              "GameCube marchent dans ces émulateurs. Les fichiers existants "
+              "sont sauvegardés avant. Ferme l'émulateur avant d'appliquer.",
+        "ja": "GameCubeパッドが動作するようコントローラー設定をインストールします。既存ファイルはバックアップされます。",
+        "es": "Instala los ajustes de mando para que tus pads GameCube "
+              "funcionen en estos emuladores. Los archivos existentes se "
+              "respaldan primero. Cierra el emulador antes de aplicar.",
+        "de": "Installiert die passenden Controller-Einstellungen, damit deine "
+              "GameCube-Pads in diesen Emulatoren funktionieren. Vorhandene "
+              "Dateien werden zuvor gesichert. Emulator vorher schließen.",
+        "pt": "Instala as configurações de controle para seus pads GameCube "
+              "funcionarem nesses emuladores. Arquivos existentes são salvos "
+              "antes. Feche o emulador antes de aplicar.",
+        "it": "Installa le impostazioni del controller per far funzionare i tuoi "
+              "pad GameCube in questi emulatori. I file esistenti vengono salvati "
+              "prima. Chiudi l'emulatore prima di applicare.",
+    },
+    "emucfg.no_emulators": {
+        "en": "No supported emulators found on this PC.",
+        "fr": "Aucun émulateur pris en charge trouvé sur ce PC.",
+        "ja": "このPCに対応エミュレーターが見つかりません。",
+        "es": "No se encontraron emuladores compatibles en este PC.",
+        "de": "Keine unterstützten Emulatoren auf diesem PC gefunden.",
+        "pt": "Nenhum emulador compatível encontrado neste PC.",
+        "it": "Nessun emulatore supportato trovato su questo PC.",
+    },
+    "emucfg.auto_ok": {
+        "en": "Auto-detects the pad — no setup needed",
+        "fr": "Détecte le pad tout seul — rien à configurer",
+        "ja": "パッドを自動検出 — 設定不要",
+        "es": "Detecta el mando solo — sin configuración",
+        "de": "Erkennt das Pad automatisch — keine Einrichtung nötig",
+        "pt": "Detecta o controle sozinho — sem configuração",
+        "it": "Rileva il pad da solo — nessuna configurazione",
+    },
+    "emucfg.apply": {
+        "en": "Apply to selected",
+        "fr": "Appliquer à la sélection",
+        "ja": "選択に適用",
+        "es": "Aplicar a lo seleccionado",
+        "de": "Auf Auswahl anwenden",
+        "pt": "Aplicar à seleção",
+        "it": "Applica alla selezione",
+    },
+    "emucfg.running_warning": {
+        "en": "Close these first, then apply: {emus}",
+        "fr": "Ferme d'abord ceci, puis applique : {emus}",
+        "ja": "先にこれらを閉じてから適用: {emus}",
+        "es": "Cierra esto primero y luego aplica: {emus}",
+        "de": "Erst schließen, dann anwenden: {emus}",
+        "pt": "Feche isto primeiro, depois aplique: {emus}",
+        "it": "Chiudi prima questi, poi applica: {emus}",
+    },
+    "emucfg.applying": {
+        "en": "Applying…",
+        "fr": "Application…",
+        "ja": "適用中…",
+        "es": "Aplicando…",
+        "de": "Wird angewendet…",
+        "pt": "Aplicando…",
+        "it": "Applicazione…",
+    },
+    "emucfg.done": {
+        "en": "Done — {n} file(s) written. Relaunch the emulator to test.",
+        "fr": "Terminé — {n} fichier(s) écrit(s). Relance l'émulateur pour tester.",
+        "ja": "完了 — {n}個のファイルを作成。エミュレーターを再起動してください。",
+        "es": "Listo — {n} archivo(s) escritos. Reinicia el emulador para probar.",
+        "de": "Fertig — {n} Datei(en) geschrieben. Emulator neu starten zum Testen.",
+        "pt": "Concluído — {n} arquivo(s) escritos. Reinicie o emulador para testar.",
+        "it": "Fatto — {n} file scritti. Riavvia l'emulatore per testare.",
+    },
+    "emucfg.error": {
+        "en": "Some files failed: {errors}",
+        "fr": "Échec sur certains fichiers : {errors}",
+        "ja": "一部のファイルに失敗: {errors}",
+        "es": "Fallaron algunos archivos: {errors}",
+        "de": "Einige Dateien fehlgeschlagen: {errors}",
+        "pt": "Alguns arquivos falharam: {errors}",
+        "it": "Alcuni file non riusciti: {errors}",
+    },
+    "emucfg.locate_launchbox": {
+        "en": "Locate LaunchBox folder…",
+        "fr": "Localiser le dossier LaunchBox…",
+        "ja": "LaunchBoxフォルダを指定…",
+        "es": "Localizar carpeta de LaunchBox…",
+        "de": "LaunchBox-Ordner suchen…",
+        "pt": "Localizar pasta do LaunchBox…",
+        "it": "Individua la cartella LaunchBox…",
+    },
+    "emucfg.backup_note": {
+        "en": "Backups saved next to each file (.gcbak-…).",
+        "fr": "Sauvegardes créées à côté de chaque fichier (.gcbak-…).",
+        "ja": "各ファイルの隣にバックアップを保存 (.gcbak-…)。",
+        "es": "Copias de seguridad junto a cada archivo (.gcbak-…).",
+        "de": "Sicherungen neben jeder Datei gespeichert (.gcbak-…).",
+        "pt": "Backups salvos ao lado de cada arquivo (.gcbak-…).",
+        "it": "Backup salvati accanto a ogni file (.gcbak-…).",
+    },
     "settings.paired_controllers": {
         "en": "Paired Controllers",
         "fr": "Manettes appairées",

@@ -93,6 +93,7 @@ DEFAULT_CALIBRATION = {
     'stick_right_octagon': None,
     'slot_assignments': {},
     'device_links': {},
+    'launchbox_path': '',
 }
 
 # Calibration keys that are per-device (follow the physical controller, not the slot).
